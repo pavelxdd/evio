@@ -33,39 +33,50 @@
 #include <sys/eventfd.h>
 #include <stdatomic.h>
 
-#ifndef EVIO_DEF_EVENTS
 #define EVIO_DEF_EVENTS 64
-#endif
-
-#ifndef EVIO_MAX_EVENTS
 #define EVIO_MAX_EVENTS (INT_MAX / (int)sizeof(struct epoll_event))
-#endif
-
-#ifndef EVIO_MIN_TIMEJUMP
-#define EVIO_MIN_TIMEJUMP EVIO_TIME_FROM_SEC(1)
-#endif
-
-#ifndef EVIO_MIN_TIMEOUT
-#define EVIO_MIN_TIMEOUT EVIO_TIME_FROM_MSEC(1)
-#endif
-
-#ifndef EVIO_DEF_TIMEOUT
-#define EVIO_DEF_TIMEOUT EVIO_TIME_FROM_MSEC(59743)
-#endif
-
-#ifndef EVIO_MIN_INTERVAL
-#define EVIO_MIN_INTERVAL EVIO_TIME_FROM_NSEC(122070)
-#endif
 
 #ifndef EVIO_CACHELINE
 #define EVIO_CACHELINE 128
 #endif
 
-#ifndef __evio_cacheline
-#   if __evio_has_attribute(__aligned__)
-#       define __evio_cacheline __attribute__((__aligned__(EVIO_CACHELINE)))
+#ifndef __evio_has_builtin
+#   ifdef __has_builtin
+#       define __evio_has_builtin(x) __has_builtin(x)
 #   else
-#       define __evio_cacheline
+#       define __evio_has_builtin(x) (0)
+#   endif
+#endif
+
+#ifndef __evio_likely
+#   if __evio_has_builtin(__builtin_expect)
+#       define __evio_likely(x) (__builtin_expect(!!(x), 1))
+#   else
+#       define __evio_likely(x) (x)
+#   endif
+#endif
+
+#ifndef __evio_unlikely
+#   if __evio_has_builtin(__builtin_expect)
+#       define __evio_unlikely(x) (__builtin_expect(!!(x), 0))
+#   else
+#       define __evio_unlikely(x) (x)
+#   endif
+#endif
+
+#ifndef __evio_noinline
+#   if __evio_has_attribute(__noinline__)
+#       define __evio_noinline __attribute__((__noinline__))
+#   else
+#       define __evio_noinline
+#   endif
+#endif
+
+#ifndef __evio_aligned
+#   if __evio_has_attribute(__aligned__)
+#       define __evio_aligned(x) __attribute__((__aligned__(x)))
+#   else
+#       define __evio_aligned(x)
 #   endif
 #endif
 
@@ -101,54 +112,9 @@ void evio_set_allocator(evio_realloc_cb cb, void *ctx)
 #define evio_malloc(size)       evio_realloc(NULL, size)
 #define evio_free(ptr)          evio_realloc(ptr, 0)
 
-struct timespec evio_timespec_realtime(void)
-{
-    static _Atomic clockid_t fast_clock_id = (clockid_t)(-1);
-
-    clockid_t clock_id = atomic_load_explicit(&fast_clock_id, memory_order_relaxed);
-    if (__evio_likely(clock_id != (clockid_t)(-1)))
-        goto out;
-
-    struct timespec ts;
-    if (!clock_getres(CLOCK_REALTIME_COARSE, &ts) && ts.tv_nsec <= 1000000) {
-        clock_id = CLOCK_REALTIME_COARSE;
-    } else {
-        clock_id = CLOCK_REALTIME;
-    }
-
-    atomic_store_explicit(&fast_clock_id, clock_id, memory_order_relaxed);
-out:
-    return evio_timespec(clock_id);
-}
-
-struct timespec evio_timespec_monotonic(void)
-{
-    static _Atomic clockid_t fast_clock_id = (clockid_t)(-1);
-
-    clockid_t clock_id = atomic_load_explicit(&fast_clock_id, memory_order_relaxed);
-    if (__evio_likely(clock_id != (clockid_t)(-1)))
-        goto out;
-
-    struct timespec ts;
-    if (!clock_getres(CLOCK_MONOTONIC_COARSE, &ts) && ts.tv_nsec <= 1000000) {
-        clock_id = CLOCK_MONOTONIC_COARSE;
-    } else {
-        clock_id = CLOCK_MONOTONIC;
-    }
-
-    atomic_store_explicit(&fast_clock_id, clock_id, memory_order_relaxed);
-out:
-    return evio_timespec(clock_id);
-}
-
 typedef struct {
-    evio_base base;
-    evio_time_t at;
-} evio_at;
-
-typedef struct {
-    evio_at *w;
-    evio_time_t at;
+    evio_timer *w;
+    uint64_t time;
 } evio_node;
 
 typedef struct {
@@ -167,7 +133,7 @@ typedef struct {
     evio_list *head;
     _Atomic(evio_loop *) loop;
     _Atomic uint8_t pending;
-} __evio_cacheline evio_sig;
+} __evio_aligned(EVIO_CACHELINE) evio_sig;
 
 static evio_sig signals[NSIG - 1] = { 0 };
 
@@ -175,14 +141,12 @@ struct evio_loop {
     int fd;
     void *data;
     size_t refcount;
+
+    uint64_t time;
+    clockid_t clock_id;
+
     uint8_t done;
     uint8_t reinit;
-
-    evio_time_t time_real;
-    evio_time_t time_mono;
-    evio_time_t time_base;
-    evio_time_t time_diff;
-    uint8_t time_negative;
 
     evio_base pending;
     size_t pending_count;
@@ -207,10 +171,6 @@ struct evio_loop {
     evio_node *timer;
     size_t timer_count;
     size_t timer_total;
-
-    evio_node *cron;
-    size_t cron_count;
-    size_t cron_total;
 
     evio_idle **idle;
     size_t idle_count;
@@ -268,7 +228,7 @@ void evio_list_remove(evio_list **head, evio_list *list)
 #define EVIO_HROOT      (EVIO_HSIZE - 1)
 #define EVIO_HPARENT(i) ((((i) - EVIO_HROOT - 1) / EVIO_HSIZE) + EVIO_HROOT)
 
-static __evio_nonnull(1)
+static __evio_noinline __evio_nonnull(1)
 void evio_heap_up(evio_node *heap, size_t index)
 {
     evio_node node = heap[index];
@@ -276,7 +236,7 @@ void evio_heap_up(evio_node *heap, size_t index)
     while (1) {
         size_t parent = index > EVIO_HROOT ? EVIO_HPARENT(index) : index;
 
-        if (parent == index || heap[parent].at <= node.at)
+        if (parent == index || heap[parent].time <= node.time)
             break;
 
         heap[index] = heap[parent];
@@ -289,7 +249,7 @@ void evio_heap_up(evio_node *heap, size_t index)
     heap[index].w->base.active = index;
 }
 
-static __evio_nonnull(1)
+static __evio_noinline __evio_nonnull(1)
 void evio_heap_down(evio_node *heap, size_t index, size_t count)
 {
     evio_node node = heap[index];
@@ -300,24 +260,24 @@ void evio_heap_down(evio_node *heap, size_t index, size_t count)
         evio_node *pos = row;
 
         if (__evio_likely(row + EVIO_HSIZE - 1 < end)) {
-            if (pos->at > row[1].at)
+            if (pos->time > row[1].time)
                 pos = row + 1;
-            if (pos->at > row[2].at)
+            if (pos->time > row[2].time)
                 pos = row + 2;
-            if (pos->at > row[3].at)
+            if (pos->time > row[3].time)
                 pos = row + 3;
         } else if (row < end) {
-            if (row + 1 < end && pos->at > row[1].at)
+            if (row + 1 < end && pos->time > row[1].time)
                 pos = row + 1;
-            if (row + 2 < end && pos->at > row[2].at)
+            if (row + 2 < end && pos->time > row[2].time)
                 pos = row + 2;
-            if (row + 3 < end && pos->at > row[3].at)
+            if (row + 3 < end && pos->time > row[3].time)
                 pos = row + 3;
         } else {
             break;
         }
 
-        if (node.at <= pos->at)
+        if (node.time <= pos->time)
             break;
 
         heap[index] = *pos;
@@ -333,7 +293,7 @@ void evio_heap_down(evio_node *heap, size_t index, size_t count)
 static __evio_inline __evio_nonnull(1)
 void evio_heap_adjust(evio_node *heap, size_t index, size_t count)
 {
-    if (index > EVIO_HROOT && heap[index].at <= heap[EVIO_HPARENT(index)].at) {
+    if (index > EVIO_HROOT && heap[index].time <= heap[EVIO_HPARENT(index)].time) {
         evio_heap_up(heap, index);
     } else {
         evio_heap_down(heap, index, count);
@@ -509,87 +469,27 @@ void evio_done_reverse(evio_loop *loop, uint16_t emask)
 static __evio_nonnull(1)
 void evio_timer_reinit(evio_loop *loop)
 {
-    if (!loop->timer_count || loop->timer[EVIO_HROOT].at >= loop->time_mono)
+    if (!loop->timer_count || loop->timer[EVIO_HROOT].time >= loop->time)
         return;
 
     do {
         evio_timer *w = (evio_timer *)loop->timer[EVIO_HROOT].w;
 
         if (w->repeat) {
-            w->at += w->repeat;
-            if (w->at < loop->time_mono)
-                w->at = loop->time_mono;
+            w->time += w->repeat;
+            if (w->time < loop->time)
+                w->time = loop->time;
 
-            loop->timer[EVIO_HROOT].at = w->at;
+            loop->timer[EVIO_HROOT].time = w->time;
             evio_heap_down(loop->timer, EVIO_HROOT, loop->timer_count);
         } else {
             evio_timer_stop(loop, w);
         }
 
         evio_feed_reverse(loop, &w->base);
-    } while (loop->timer_count && loop->timer[EVIO_HROOT].at < loop->time_mono);
+    } while (loop->timer_count && loop->timer[EVIO_HROOT].time < loop->time);
 
     evio_done_reverse(loop, EVIO_TIMER);
-}
-
-static __evio_nonnull(1, 2)
-void evio_cron_recalc(evio_loop *loop, evio_cron *w)
-{
-    evio_time_t interval = w->interval > EVIO_MIN_INTERVAL ?
-                           w->interval : EVIO_MIN_INTERVAL;
-    evio_time_t at = w->offset + interval * ((loop->time_real - w->offset) / interval);
-
-    while (at <= loop->time_real) {
-        evio_time_t next_at = at + w->interval;
-
-        if (__evio_unlikely(next_at == at)) {
-            at = loop->time_real;
-            break;
-        }
-
-        at = next_at;
-    }
-
-    w->at = at;
-}
-
-static __evio_nonnull(1)
-void evio_cron_reinit(evio_loop *loop)
-{
-    if (!loop->cron_count || loop->cron[EVIO_HROOT].at >= loop->time_real)
-        return;
-
-    do {
-        evio_cron *w = (evio_cron *)loop->cron[EVIO_HROOT].w;
-
-        if (w->interval) {
-            evio_cron_recalc(loop, w);
-            loop->cron[EVIO_HROOT].at = w->at;
-            evio_heap_down(loop->cron, EVIO_HROOT, loop->cron_count);
-        } else {
-            evio_cron_stop(loop, w);
-        }
-
-        evio_feed_reverse(loop, &w->base);
-    } while (loop->cron_count && loop->cron[EVIO_HROOT].at < loop->time_real);
-
-    evio_done_reverse(loop, EVIO_CRON);
-}
-
-static __evio_nonnull(1)
-void evio_cron_reschedule(evio_loop *loop)
-{
-    for (size_t i = EVIO_HROOT; i < loop->cron_count + EVIO_HROOT; ++i) {
-        evio_cron *w = (evio_cron *)loop->cron[i].w;
-
-        if (w->interval)
-            evio_cron_recalc(loop, w);
-
-        loop->cron[i].at = w->at;
-    }
-
-    for (size_t i = 0; i < loop->cron_count; ++i)
-        evio_heap_up(loop->cron, EVIO_HROOT + i);
 }
 
 static __evio_nonnull(1)
@@ -624,10 +524,8 @@ void evio_loop_reinit(evio_loop *loop)
 }
 
 static __evio_nonnull(1)
-void evio_epoll(evio_loop *loop, evio_time_t timeout)
+void evio_epoll(evio_loop *loop, int timeout)
 {
-    timeout = EVIO_TIME_TO_MSEC(timeout);
-
     if (__evio_unlikely(loop->fdchanges_count)) {
         struct epoll_event ev;
         memset(&ev, 0, sizeof(ev));
@@ -719,19 +617,15 @@ void evio_feed_events(evio_loop *loop, evio_base **base, size_t count, uint16_t 
         evio_feed_event(loop, base[i], emask);
 }
 
-static __evio_inline __evio_nonnull(1)
-void evio_loop_time_init(evio_loop *loop, evio_time_t mono)
+static __evio_inline __evio_nonnull(1) __evio_nodiscard
+uint64_t evio_loop_gettime(evio_loop *loop)
 {
-    loop->time_real = evio_time();
-    loop->time_base = loop->time_mono = mono;
+    struct timespec ts;
+    if (__evio_unlikely(clock_gettime(loop->clock_id, &ts)))
+        abort();
 
-    if (loop->time_real > loop->time_mono) {
-        loop->time_diff = loop->time_real - loop->time_mono;
-        loop->time_negative = 0;
-    } else {
-        loop->time_diff = loop->time_mono - loop->time_real;
-        loop->time_negative = 1;
-    }
+    return (uint64_t)ts.tv_sec * 1000ull +
+           (uint64_t)ts.tv_nsec / 1000000ull;
 }
 
 evio_loop *evio_loop_new(int maxevents)
@@ -746,7 +640,14 @@ evio_loop *evio_loop_new(int maxevents)
         .maxfd  = -1,
     };
 
-    evio_loop_time_init(loop, evio_monotonic_time());
+    struct timespec ts;
+    if (!clock_getres(CLOCK_MONOTONIC_COARSE, &ts) && ts.tv_nsec <= 1000000) {
+        loop->clock_id = CLOCK_MONOTONIC_COARSE;
+    } else {
+        loop->clock_id = CLOCK_MONOTONIC;
+    }
+
+    loop->time = evio_loop_gettime(loop);
 
     evio_base_init(&loop->pending, evio_dummy_cb);
     loop->pending.data = NULL;
@@ -807,7 +708,6 @@ void evio_loop_free(evio_loop *loop)
     evio_free(loop->fds);
     evio_free(loop->fdchanges);
     evio_free(loop->timer);
-    evio_free(loop->cron);
     evio_free(loop->idle);
     evio_free(loop->async);
     evio_free(loop->prepare);
@@ -817,44 +717,14 @@ void evio_loop_free(evio_loop *loop)
     evio_free(loop);
 }
 
-evio_time_t evio_loop_time(evio_loop *loop)
+uint64_t evio_loop_time(evio_loop *loop)
 {
-    return loop->time_real;
+    return loop->time;
 }
 
-evio_time_t evio_loop_monotonic_time(evio_loop *loop)
+uint64_t evio_loop_update_time(evio_loop *loop)
 {
-    return loop->time_mono;
-}
-
-void evio_loop_update_time(evio_loop *loop)
-{
-    loop->time_mono = evio_monotonic_time();
-
-    if (__evio_likely(loop->time_mono > loop->time_base &&
-                      loop->time_mono - loop->time_base < EVIO_MIN_TIMEJUMP / 2)) {
-        if (loop->time_negative) {
-            loop->time_real = loop->time_mono - loop->time_diff;
-        } else {
-            loop->time_real = loop->time_mono + loop->time_diff;
-        }
-        return;
-    }
-
-    evio_time_t time_diff = loop->time_diff;
-    evio_loop_time_init(loop, loop->time_mono);
-
-    for (int i = 4; --i;) {
-        evio_time_t jump = time_diff > loop->time_diff
-                           ? time_diff - loop->time_diff
-                           : loop->time_diff - time_diff;
-        if (__evio_likely(jump < EVIO_MIN_TIMEJUMP))
-            return;
-
-        evio_loop_time_init(loop, evio_monotonic_time());
-    }
-
-    evio_cron_reschedule(loop);
+    return loop->time = evio_loop_gettime(loop);
 }
 
 void evio_loop_ref(evio_loop *loop)
@@ -887,7 +757,7 @@ void *evio_loop_get_data(evio_loop *loop)
 }
 
 static __evio_inline __evio_nonnull(1) __evio_nodiscard
-evio_time_t evio_loop_timeout(evio_loop *loop)
+int evio_loop_timeout(evio_loop *loop)
 {
     if (loop->done || !loop->refcount ||
         loop->pending_count ||
@@ -895,28 +765,18 @@ evio_time_t evio_loop_timeout(evio_loop *loop)
         return 0;
     }
 
-    evio_time_t timeout = EVIO_DEF_TIMEOUT;
+    if (!loop->timer_count)
+        return -1;
 
-    if (loop->timer_count) {
-        evio_node *node = &loop->timer[EVIO_HROOT];
-        evio_time_t diff = node->at > loop->time_mono ?
-                           node->at - loop->time_mono : 0;
-        if (timeout > diff)
-            timeout = diff;
-    }
+    evio_node *node = &loop->timer[EVIO_HROOT];
+    if (node->time <= loop->time)
+        return 0;
 
-    if (loop->cron_count) {
-        evio_node *node = &loop->cron[EVIO_HROOT];
-        evio_time_t diff = node->at > loop->time_real ?
-                           node->at - loop->time_real : 0;
-        if (timeout > diff)
-            timeout = diff;
-    }
+    uint64_t diff = node->time - loop->time;
+    if (__evio_unlikely(diff > INT_MAX))
+        return INT_MAX;
 
-    if (__evio_unlikely(timeout && timeout < EVIO_MIN_TIMEOUT))
-        timeout = EVIO_MIN_TIMEOUT;
-
-    return timeout;
+    return diff;
 }
 
 size_t evio_loop_run(evio_loop *loop, uint8_t run_mode)
@@ -936,12 +796,12 @@ size_t evio_loop_run(evio_loop *loop, uint8_t run_mode)
             break;
 
         evio_loop_reinit(loop);
-        evio_loop_update_time(loop);
+        loop->time = evio_loop_gettime(loop);
 
         atomic_store_explicit(&loop->pipe_write_wanted, 1, memory_order_seq_cst);
 
-        evio_time_t timeout = (run_mode & EVIO_RUN_NOWAIT)
-                              ? 0 : evio_loop_timeout(loop);
+        int timeout = (run_mode & EVIO_RUN_NOWAIT)
+                      ? 0 : evio_loop_timeout(loop);
         evio_epoll(loop, timeout);
 
         atomic_store_explicit(&loop->pipe_write_wanted, 0, memory_order_relaxed);
@@ -951,9 +811,8 @@ size_t evio_loop_run(evio_loop *loop, uint8_t run_mode)
             evio_feed_event(loop, &loop->pipe.base, EVIO_CUSTOM);
         }
 
-        evio_loop_update_time(loop);
+        loop->time = evio_loop_gettime(loop);
         evio_timer_reinit(loop);
-        evio_cron_reinit(loop);
 
         if (loop->idle_count && !loop->pending_count) {
             evio_feed_events(loop, (evio_base **)loop->idle,
@@ -1000,13 +859,6 @@ void evio_loop_walk(evio_loop *loop, evio_cb cb, uint16_t emask)
         for (size_t i = loop->timer_count + EVIO_HROOT; i-- > EVIO_HROOT;) {
             evio_timer *w = (evio_timer *)loop->timer[i].w;
             cb(loop, &w->base, EVIO_WALK | EVIO_TIMER);
-        }
-    }
-
-    if (emask & EVIO_CRON) {
-        for (size_t i = loop->cron_count + EVIO_HROOT; i-- > EVIO_HROOT;) {
-            evio_cron *w = (evio_cron *)loop->cron[i].w;
-            cb(loop, &w->base, EVIO_WALK | EVIO_CRON);
         }
     }
 
@@ -1197,8 +1049,6 @@ void evio_timer_start(evio_loop *loop, evio_timer *w)
     if (__evio_unlikely(w->active))
         return;
 
-    w->at += loop->time_mono;
-
     w->active = ++loop->timer_count + EVIO_HROOT - 1;
     evio_loop_ref(loop);
 
@@ -1207,8 +1057,8 @@ void evio_timer_start(evio_loop *loop, evio_timer *w)
                       w->active + 1, &loop->timer_total);
 
     evio_node *node = &loop->timer[w->active];
-    node->w = (evio_at *)w;
-    node->at = w->at;
+    node->w = w;
+    node->time = w->time += loop->time;
 
     evio_heap_up(loop->timer, w->active);
 }
@@ -1220,7 +1070,7 @@ void evio_timer_stop(evio_loop *loop, evio_timer *w)
     if (__evio_unlikely(!w->active))
         return;
 
-    assert(loop->timer[w->active].w == (evio_at *)w);
+    assert(loop->timer[w->active].w == w);
     size_t count = --loop->timer_count;
 
     if (__evio_likely(w->active < count + EVIO_HROOT)) {
@@ -1228,10 +1078,10 @@ void evio_timer_stop(evio_loop *loop, evio_timer *w)
         evio_heap_adjust(loop->timer, w->active, count);
     }
 
-    if (__evio_likely(w->at > loop->time_mono)) {
-        w->at -= loop->time_mono;
+    if (__evio_likely(w->time > loop->time)) {
+        w->time -= loop->time;
     } else {
-        w->at = 0;
+        w->time = 0;
     }
 
     evio_loop_unref(loop);
@@ -1244,75 +1094,24 @@ void evio_timer_again(evio_loop *loop, evio_timer *w)
 
     if (w->active) {
         if (w->repeat) {
-            w->at = loop->time_mono + w->repeat;
-            loop->timer[w->active].at = w->at;
+            w->time = loop->time + w->repeat;
+            loop->timer[w->active].time = w->time;
             evio_heap_adjust(loop->timer, w->active, loop->timer_count);
         } else {
             evio_timer_stop(loop, w);
         }
     } else if (w->repeat) {
-        w->at = w->repeat;
+        w->time = w->repeat;
         evio_timer_start(loop, w);
     }
 }
 
-evio_time_t evio_timer_remaining(evio_loop *loop, evio_timer *w)
+uint64_t evio_timer_remaining(evio_loop *loop, evio_timer *w)
 {
-    if (w->active && __evio_likely(w->at >= loop->time_mono)) {
-        return w->at - loop->time_mono;
-    } else {
+    if (!w->active || w->time < loop->time)
         return 0;
-    }
-}
 
-void evio_cron_start(evio_loop *loop, evio_cron *w)
-{
-    if (__evio_unlikely(w->active))
-        return;
-
-    if (w->interval) {
-        evio_cron_recalc(loop, w);
-    } else {
-        w->at = w->offset;
-    }
-
-    w->active = ++loop->cron_count + EVIO_HROOT - 1;
-    evio_loop_ref(loop);
-
-    loop->cron = (evio_node *)evio_array_resize(
-                     loop->cron, sizeof(evio_node),
-                     w->active + 1, &loop->cron_total);
-
-    evio_node *node = &loop->cron[w->active];
-    node->w = (evio_at *)w;
-    node->at = w->at;
-
-    evio_heap_up(loop->cron, w->active);
-}
-
-void evio_cron_stop(evio_loop *loop, evio_cron *w)
-{
-    evio_clear_pending(loop, &w->base);
-
-    if (__evio_unlikely(!w->active))
-        return;
-
-    assert(loop->cron[w->active].w == (evio_at *)w);
-    size_t count = --loop->cron_count;
-
-    if (__evio_likely(w->active < count + EVIO_HROOT)) {
-        loop->cron[w->active] = loop->cron[count + EVIO_HROOT];
-        evio_heap_adjust(loop->cron, w->active, count);
-    }
-
-    evio_loop_unref(loop);
-    w->active = 0;
-}
-
-void evio_cron_again(evio_loop *loop, evio_cron *w)
-{
-    evio_cron_stop(loop, w);
-    evio_cron_start(loop, w);
+    return w->time - loop->time;
 }
 
 void evio_signal_start(evio_loop *loop, evio_signal *w)

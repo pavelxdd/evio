@@ -31,35 +31,11 @@ extern "C" {
 #include <errno.h>
 #include <time.h>
 
-#ifndef __evio_has_builtin
-#   ifdef __has_builtin
-#       define __evio_has_builtin(x) __has_builtin(x)
-#   else
-#       define __evio_has_builtin(x) (0)
-#   endif
-#endif
-
 #ifndef __evio_has_attribute
 #   ifdef __has_attribute
 #       define __evio_has_attribute(x) __has_attribute(x)
 #   else
 #       define __evio_has_attribute(x) (0)
-#   endif
-#endif
-
-#ifndef __evio_likely
-#   if __evio_has_builtin(__builtin_expect)
-#       define __evio_likely(x) (__builtin_expect(!!(x), 1))
-#   else
-#       define __evio_likely(x) (x)
-#   endif
-#endif
-
-#ifndef __evio_unlikely
-#   if __evio_has_builtin(__builtin_expect)
-#       define __evio_unlikely(x) (__builtin_expect(!!(x), 0))
-#   else
-#       define __evio_unlikely(x) (x)
 #   endif
 #endif
 
@@ -95,85 +71,6 @@ extern "C" {
 #   endif
 #endif
 
-typedef uint64_t evio_time_t;
-
-#define EVIO_TIME_FROM_SEC(t)   ((evio_time_t)((t) * 1000000000ull))
-#define EVIO_TIME_FROM_MSEC(t)  ((evio_time_t)((t) * 1000000ull))
-#define EVIO_TIME_FROM_USEC(t)  ((evio_time_t)((t) * 1000ull))
-#define EVIO_TIME_FROM_NSEC(t)  ((evio_time_t)(t))
-#define EVIO_TIME_FROM_MIN(t)   EVIO_TIME_FROM_SEC((t) * 60ull)
-#define EVIO_TIME_FROM_HOUR(t)  EVIO_TIME_FROM_MIN((t) * 60ull)
-#define EVIO_TIME_FROM_DAY(t)   EVIO_TIME_FROM_HOUR((t) * 24ull)
-
-#define EVIO_TIME_TO_SEC(t)     ((evio_time_t)((t) / 1000000000ull))
-#define EVIO_TIME_TO_MSEC(t)    ((evio_time_t)((t) / 1000000ull))
-#define EVIO_TIME_TO_USEC(t)    ((evio_time_t)((t) / 1000ull))
-#define EVIO_TIME_TO_NSEC(t)    ((evio_time_t)(t))
-#define EVIO_TIME_TO_MIN(t)     (EVIO_TIME_TO_SEC(t) / 60ull)
-#define EVIO_TIME_TO_HOUR(t)    (EVIO_TIME_TO_MIN(t) / 60ull)
-#define EVIO_TIME_TO_DAY(t)     (EVIO_TIME_TO_HOUR(t) / 24ull)
-
-static __evio_inline __evio_nodiscard
-struct timespec evio_timespec(clockid_t clock_id)
-{
-    struct timespec ts;
-    if (__evio_unlikely(clock_gettime(clock_id, &ts)))
-        abort();
-    return ts;
-}
-
-__evio_public __evio_nodiscard
-struct timespec evio_timespec_realtime(void);
-
-__evio_public __evio_nodiscard
-struct timespec evio_timespec_monotonic(void);
-
-static __evio_inline __evio_nodiscard
-evio_time_t evio_timestamp(struct timespec ts)
-{
-    return EVIO_TIME_FROM_SEC(ts.tv_sec) +
-           EVIO_TIME_FROM_NSEC(ts.tv_nsec);
-}
-
-static __evio_inline __evio_nodiscard
-evio_time_t evio_clocktime(clockid_t clock_id)
-{
-    return evio_timestamp(evio_timespec(clock_id));
-}
-
-static __evio_inline __evio_nodiscard
-evio_time_t evio_time(void)
-{
-    return evio_timestamp(evio_timespec_realtime());
-}
-
-static __evio_inline __evio_nodiscard
-evio_time_t evio_monotonic_time(void)
-{
-    return evio_timestamp(evio_timespec_monotonic());
-}
-
-static __evio_inline
-void evio_nanosleep(struct timespec ts)
-{
-    for (;;) {
-        int err = clock_nanosleep(CLOCK_MONOTONIC, 0, &ts, &ts);
-        if (__evio_likely(!err))
-            return;
-        if (__evio_unlikely(err != EINTR))
-            abort();
-    }
-}
-
-static __evio_inline
-void evio_sleep(evio_time_t delay)
-{
-    struct timespec ts;
-    ts.tv_sec = EVIO_TIME_TO_SEC(delay);
-    ts.tv_nsec = delay - EVIO_TIME_FROM_SEC(ts.tv_sec);
-    evio_nanosleep(ts);
-}
-
 typedef void *(*evio_realloc_cb)(void *ctx, void *ptr, size_t size);
 
 __evio_public
@@ -186,16 +83,15 @@ enum {
     EVIO_WRITE      = 0x0002,
     EVIO_POLL       = 0x0004,
     EVIO_TIMER      = 0x0008,
-    EVIO_CRON       = 0x0010,
-    EVIO_SIGNAL     = 0x0020,
-    EVIO_ASYNC      = 0x0040,
-    EVIO_IDLE       = 0x0080,
-    EVIO_PREPARE    = 0x0100,
-    EVIO_CHECK      = 0x0200,
-    EVIO_CLEANUP    = 0x0400,
-    EVIO_CUSTOM     = 0x0800,
-    EVIO_WALK       = 0x4000,
-    EVIO_ERROR      = 0x8000,
+    EVIO_SIGNAL     = 0x0010,
+    EVIO_ASYNC      = 0x0020,
+    EVIO_IDLE       = 0x0040,
+    EVIO_PREPARE    = 0x0080,
+    EVIO_CHECK      = 0x0100,
+    EVIO_CLEANUP    = 0x0200,
+    EVIO_CUSTOM     = 0x0400,
+    EVIO_WALK       = 0x0800,
+    EVIO_ERROR      = 0xF000,
 };
 
 typedef struct evio_loop    evio_loop;
@@ -203,7 +99,6 @@ typedef struct evio_base    evio_base;
 typedef struct evio_list    evio_list;
 typedef struct evio_poll    evio_poll;
 typedef struct evio_timer   evio_timer;
-typedef struct evio_cron    evio_cron;
 typedef struct evio_signal  evio_signal;
 typedef struct evio_async   evio_async;
 typedef struct evio_idle    evio_idle;
@@ -220,13 +115,10 @@ __evio_public
 void evio_loop_free(evio_loop *loop);
 
 __evio_public __evio_nonnull(1) __evio_nodiscard
-evio_time_t evio_loop_time(evio_loop *loop);
-
-__evio_public __evio_nonnull(1) __evio_nodiscard
-evio_time_t evio_loop_monotonic_time(evio_loop *loop);
+uint64_t evio_loop_time(evio_loop *loop);
 
 __evio_public __evio_nonnull(1)
-void evio_loop_update_time(evio_loop *loop);
+uint64_t evio_loop_update_time(evio_loop *loop);
 
 __evio_public __evio_nonnull(1)
 void evio_loop_ref(evio_loop *loop);
@@ -365,21 +257,19 @@ void evio_poll_stop(evio_loop *loop, evio_poll *w);
 
 struct evio_timer {
     EVIO_BASE;
-    evio_time_t at;
-    evio_time_t repeat;
+    uint64_t time;
+    uint64_t repeat;
 };
 
 static __evio_inline __evio_nonnull(1)
-void evio_timer_set(evio_timer *w,
-                    evio_time_t after, evio_time_t repeat)
+void evio_timer_set(evio_timer *w, uint64_t after, uint64_t repeat)
 {
-    w->at = after;
+    w->time = after;
     w->repeat = repeat;
 }
 
 static __evio_inline __evio_nonnull(1, 2)
-void evio_timer_init(evio_timer *w, evio_cb cb,
-                     evio_time_t after, evio_time_t repeat)
+void evio_timer_init(evio_timer *w, evio_cb cb, uint64_t after, uint64_t repeat)
 {
     evio_base_init(&w->base, cb);
     evio_timer_set(w, after, repeat);
@@ -395,44 +285,7 @@ __evio_public __evio_nonnull(1, 2)
 void evio_timer_again(evio_loop *loop, evio_timer *w);
 
 __evio_public __evio_nonnull(1, 2) __evio_nodiscard
-evio_time_t evio_timer_remaining(evio_loop *loop, evio_timer *w);
-
-// ####################################################################
-// EVIO_CRON
-// ####################################################################
-
-struct evio_cron {
-    EVIO_BASE;
-    evio_time_t at;
-    evio_time_t offset;
-    evio_time_t interval;
-};
-
-static __evio_inline __evio_nonnull(1)
-void evio_cron_set(evio_cron *w,
-                   evio_time_t offset, evio_time_t interval)
-{
-    w->offset = offset;
-    w->interval = interval;
-}
-
-static __evio_inline __evio_nonnull(1, 2)
-void evio_cron_init(evio_cron *w, evio_cb cb,
-                    evio_time_t offset, evio_time_t interval)
-{
-    evio_base_init(&w->base, cb);
-    evio_cron_set(w, offset, interval);
-    w->at = 0;
-}
-
-__evio_public __evio_nonnull(1, 2)
-void evio_cron_start(evio_loop *loop, evio_cron *w);
-
-__evio_public __evio_nonnull(1, 2)
-void evio_cron_stop(evio_loop *loop, evio_cron *w);
-
-__evio_public __evio_nonnull(1, 2)
-void evio_cron_again(evio_loop *loop, evio_cron *w);
+uint64_t evio_timer_remaining(evio_loop *loop, evio_timer *w);
 
 // ####################################################################
 // EVIO_SIGNAL
@@ -574,7 +427,6 @@ typedef union evio_watcher {
     evio_list list;
     evio_poll poll;
     evio_timer timer;
-    evio_cron cron;
     evio_signal signal;
     evio_async async;
     evio_idle idle;
