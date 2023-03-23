@@ -22,19 +22,19 @@
 
 #include "evio.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include <limits.h>
-#include <assert.h>
-#include <malloc.h>
 #include <signal.h>
-#include <unistd.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <time.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
-#include <stdatomic.h>
 
 #define EVIO_DEF_EVENTS 64
 #define EVIO_MAX_EVENTS (INT_MAX / (int)sizeof(struct epoll_event))
+#define EVIO_FLAG 0xF0
 
 #ifndef EVIO_CACHELINE
 #define EVIO_CACHELINE 128
@@ -84,10 +84,10 @@ static __evio_nodiscard
 void *evio_default_realloc(void *ctx, void *ptr, size_t size)
 {
     if (__evio_likely(size)) {
-        ptr = realloc(ptr, size);
-        if (__evio_unlikely(!ptr))
+        ctx = realloc(ptr, size);
+        if (__evio_unlikely(!ctx))
             abort();
-        return ptr;
+        return ctx;
     }
 
     free(ptr);
@@ -125,8 +125,9 @@ typedef struct {
 typedef struct {
     evio_list *head;
     uint8_t emask;
+    uint8_t cache;
     uint8_t flags;
-    uint8_t count;
+    uint8_t value;
 } evio_fds;
 
 typedef struct {
@@ -152,10 +153,6 @@ struct evio_loop {
     size_t pending_count;
     size_t pending_total;
 
-    evio_base **reverse;
-    size_t reverse_count;
-    size_t reverse_total;
-
     evio_fds *fds;
     size_t fds_total;
     int maxfd;
@@ -164,9 +161,13 @@ struct evio_loop {
     size_t fdchanges_count;
     size_t fdchanges_total;
 
+    int *fderrors;
+    size_t fderrors_count;
+    size_t fderrors_total;
+
     evio_poll pipe;
-    _Atomic uint8_t pipe_write_wanted;
-    _Atomic uint8_t pipe_write_skipped;
+    _Atomic uint8_t pipe_locked;
+    _Atomic uint8_t pipe_wanted;
 
     evio_node *timer;
     size_t timer_count;
@@ -224,7 +225,7 @@ void evio_list_remove(evio_list **head, evio_list *list)
     *head = list->next;
 }
 
-#define EVIO_HSIZE      4
+#define EVIO_HSIZE      3
 #define EVIO_HROOT      (EVIO_HSIZE - 1)
 #define EVIO_HPARENT(i) ((((i) - EVIO_HROOT - 1) / EVIO_HSIZE) + EVIO_HROOT)
 
@@ -240,13 +241,13 @@ void evio_heap_up(evio_node *heap, size_t index)
             break;
 
         heap[index] = heap[parent];
-        heap[index].w->base.active = index;
+        heap[index].w->active = index;
 
         index = parent;
     }
 
     heap[index] = node;
-    heap[index].w->base.active = index;
+    heap[index].w->active = index;
 }
 
 static __evio_noinline __evio_nonnull(1)
@@ -260,19 +261,15 @@ void evio_heap_down(evio_node *heap, size_t index, size_t count)
         evio_node *pos = row;
 
         if (__evio_likely(row + EVIO_HSIZE - 1 < end)) {
-            if (pos->time > row[1].time)
-                pos = row + 1;
-            if (pos->time > row[2].time)
-                pos = row + 2;
-            if (pos->time > row[3].time)
-                pos = row + 3;
+            for (size_t i = 1; i < EVIO_HSIZE; ++i) {
+                if (pos->time > row[i].time)
+                    pos = row + i;
+            }
         } else if (row < end) {
-            if (row + 1 < end && pos->time > row[1].time)
-                pos = row + 1;
-            if (row + 2 < end && pos->time > row[2].time)
-                pos = row + 2;
-            if (row + 3 < end && pos->time > row[3].time)
-                pos = row + 3;
+            for (size_t i = 1; i < EVIO_HSIZE && row + i < end; ++i) {
+                if (pos->time > row[i].time)
+                    pos = row + i;
+            }
         } else {
             break;
         }
@@ -281,13 +278,13 @@ void evio_heap_down(evio_node *heap, size_t index, size_t count)
             break;
 
         heap[index] = *pos;
-        heap[index].w->base.active = index;
+        heap[index].w->active = index;
 
         index = pos - heap;
     }
 
     heap[index] = node;
-    heap[index].w->base.active = index;
+    heap[index].w->active = index;
 }
 
 static __evio_inline __evio_nonnull(1)
@@ -300,12 +297,133 @@ void evio_heap_adjust(evio_node *heap, size_t index, size_t count)
     }
 }
 
-static __evio_nonnull(1, 2)
+static __evio_noinline __evio_nonnull(1, 2)
 void evio_dummy_cb(evio_loop *loop, evio_base *base, uint16_t emask)
 {
 }
 
-static __evio_nonnull(1)
+static __evio_inline __evio_nonnull(1, 2)
+void evio_queue_event(evio_loop *loop, evio_base *base, uint16_t emask)
+{
+    if (__evio_unlikely(base->pending)) {
+        evio_pending *p = (evio_pending *)loop->pending.data + base->pending - 1;
+        p->emask |= emask;
+        return;
+    }
+
+    base->pending = ++loop->pending_count;
+    loop->pending.data = evio_array_resize(
+                             loop->pending.data, sizeof(evio_pending),
+                             loop->pending_count, &loop->pending_total);
+
+    evio_pending *p = (evio_pending *)loop->pending.data + base->pending - 1;
+    p->base = base;
+    p->emask = emask;
+}
+
+static __evio_noinline __evio_nonnull(1, 2)
+void evio_queue_events(evio_loop *loop, evio_base **base, size_t count, uint16_t emask)
+{
+    for (size_t i = count; i--;)
+        evio_queue_event(loop, base[i], emask);
+}
+
+static __evio_noinline __evio_nonnull(1)
+void evio_queue_fd_events(evio_loop *loop, int fd, uint8_t emask)
+{
+    evio_fds *fds = &loop->fds[fd];
+
+    for (evio_poll *w = (evio_poll *)fds->head; w; w = (evio_poll *)w->next) {
+        if (w->emask & emask)
+            evio_queue_event(loop, &w->base, EVIO_POLL | (w->emask & emask));
+    }
+}
+
+static __evio_noinline __evio_nonnull(1)
+void evio_queue_fd_errors(evio_loop *loop, int fd)
+{
+    evio_fds *fds = &loop->fds[fd];
+
+    while (fds->head) {
+        evio_poll *w = (evio_poll *)fds->head;
+        evio_poll_stop(loop, w);
+        evio_queue_event(loop, &w->base, EVIO_POLL | EVIO_READ | EVIO_WRITE | EVIO_ERROR);
+    }
+}
+
+static __evio_inline __evio_nonnull(1)
+void evio_queue_fd_change(evio_loop *loop, int fd, uint8_t flags)
+{
+    evio_fds *fds = &loop->fds[fd];
+
+    if (__evio_likely(!fds->flags)) {
+        loop->fdchanges = (int *)evio_array_resize(
+                              loop->fdchanges, sizeof(int),
+                              ++loop->fdchanges_count,
+                              &loop->fdchanges_total);
+        loop->fdchanges[loop->fdchanges_count - 1] = fd;
+    }
+
+    fds->flags |= EVIO_FLAG | flags;
+}
+
+static __evio_inline __evio_nonnull(1)
+int evio_pipe_write(evio_loop *loop)
+{
+    if (atomic_exchange_explicit(&loop->pipe_wanted, 1, memory_order_acq_rel))
+        return 0;
+
+    if (!atomic_load_explicit(&loop->pipe_locked, memory_order_seq_cst))
+        return 0;
+
+    atomic_store_explicit(&loop->pipe_wanted, 0, memory_order_release);
+
+    int err = errno;
+    int rc = eventfd_write(loop->pipe.fd, 1);
+    errno = err;
+    return rc;
+}
+
+static __evio_inline __evio_nonnull(1)
+int evio_pipe_read(evio_loop *loop)
+{
+    eventfd_t counter;
+    return eventfd_read(loop->pipe.fd, &counter);
+}
+
+static __evio_noinline __evio_nonnull(1, 2)
+void evio_pipe_cb(evio_loop *loop, evio_base *base, uint16_t emask)
+{
+    atomic_store_explicit(&loop->pipe_wanted, 0, memory_order_release);
+
+    if (emask & EVIO_READ)
+        evio_pipe_read(loop);
+
+    if (atomic_exchange_explicit(&loop->signal_pending, 0, memory_order_acq_rel)) {
+        for (int i = NSIG - 1; i--;) {
+            evio_sig *sig = &signals[i];
+
+            if (atomic_load_explicit(&sig->loop, memory_order_acquire) != loop)
+                continue;
+
+            if (atomic_exchange_explicit(&sig->pending, 0, memory_order_acq_rel)) {
+                for (evio_list *w = sig->head; w; w = w->next)
+                    evio_queue_event(loop, &w->base, EVIO_SIGNAL);
+            }
+        }
+    }
+
+    if (atomic_exchange_explicit(&loop->async_pending, 0, memory_order_acq_rel)) {
+        for (size_t i = loop->async_count; i--;) {
+            evio_async *async = loop->async[i];
+
+            if (atomic_exchange_explicit(&async->status, 0, memory_order_acq_rel))
+                evio_queue_event(loop, &async->base, EVIO_ASYNC);
+        }
+    }
+}
+
+static __evio_noinline __evio_nonnull(1)
 void evio_pipe_init(evio_loop *loop)
 {
     if (__evio_likely(loop->pipe.active))
@@ -316,164 +434,107 @@ void evio_pipe_init(evio_loop *loop)
         abort();
 
     if (loop->pipe.fd >= 0) {
-        dup2(fd, loop->pipe.fd);
+        int rc = dup3(fd, loop->pipe.fd, O_CLOEXEC);
         close(fd);
+
+        if (__evio_unlikely(rc))
+            abort();
+
         fd = loop->pipe.fd;
     }
 
     evio_poll_set(&loop->pipe, fd, EVIO_READ);
     evio_poll_start(loop, &loop->pipe);
-    evio_loop_unref(loop);
+    evio_unref(loop);
 }
 
-static __evio_inline __evio_nonnull(1)
-ssize_t evio_pipe_write(evio_loop *loop)
+static __evio_noinline __evio_nonnull(1)
+void evio_poll_update(evio_loop *loop)
 {
-    atomic_store_explicit(&loop->pipe_write_skipped, 1, memory_order_release);
+    if (__evio_likely(!loop->fdchanges_count))
+        return;
 
-    if (!atomic_load_explicit(&loop->pipe_write_wanted, memory_order_seq_cst))
-        return 0;
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof(ev));
 
-    atomic_store_explicit(&loop->pipe_write_skipped, 0, memory_order_release);
-
-    int err = errno;
-
-    uint64_t counter = 1;
-    ssize_t cnt = write(loop->pipe.fd, &counter, sizeof(counter));
-
-    errno = err;
-    return cnt;
-}
-
-static __evio_inline __evio_nonnull(1)
-ssize_t evio_pipe_read(evio_loop *loop)
-{
-    uint64_t counter;
-    return read(loop->pipe.fd, &counter, sizeof(counter));
-}
-
-static __evio_nonnull(1, 2)
-void evio_pipe_cb(evio_loop *loop, evio_base *base, uint16_t emask)
-{
-    if (emask & EVIO_READ)
-        evio_pipe_read(loop);
-
-    atomic_store_explicit(&loop->pipe_write_skipped, 0, memory_order_release);
-
-    uint8_t signal_expected = 1;
-    if (atomic_compare_exchange_strong_explicit(&loop->signal_pending,
-                                                &signal_expected, 0,
-                                                memory_order_acq_rel,
-                                                memory_order_relaxed)) {
-        for (int i = NSIG - 1; i--;) {
-            evio_sig *sig = &signals[i];
-
-            if (atomic_load_explicit(&sig->loop, memory_order_acquire) != loop)
-                continue;
-
-            signal_expected = 1;
-            if (atomic_compare_exchange_strong_explicit(&sig->pending,
-                                                        &signal_expected, 0,
-                                                        memory_order_acq_rel,
-                                                        memory_order_relaxed)) {
-                for (evio_list *w = sig->head; w; w = w->next)
-                    evio_feed_event(loop, &w->base, EVIO_SIGNAL);
-            }
-        }
-    }
-
-    uint8_t async_expected = 1;
-    if (atomic_compare_exchange_strong_explicit(&loop->async_pending,
-                                                &async_expected, 0,
-                                                memory_order_acq_rel,
-                                                memory_order_relaxed)) {
-        for (size_t i = loop->async_count; i--;) {
-            evio_async *async = loop->async[i];
-
-            async_expected = 1;
-            if (atomic_compare_exchange_strong_explicit(&async->status,
-                                                        &async_expected, 0,
-                                                        memory_order_acq_rel,
-                                                        memory_order_relaxed)) {
-                evio_feed_event(loop, &async->base, EVIO_ASYNC);
-            }
-        }
-    }
-}
-
-static __evio_inline __evio_nonnull(1)
-void evio_fd_purge(evio_loop *loop, int fd)
-{
-    evio_fds *fds = &loop->fds[fd];
-    evio_poll *w;
-    while ((w = (evio_poll *)fds->head)) {
-        evio_poll_stop(loop, w);
-        evio_feed_event(loop, &w->base, EVIO_ERROR | EVIO_READ | EVIO_WRITE);
-    }
-}
-
-static __evio_inline __evio_nonnull(1)
-void evio_fd_change(evio_loop *loop, int fd, uint8_t flags)
-{
-    evio_fds *fds = &loop->fds[fd];
-
-    if (!fds->flags) {
-        loop->fdchanges = (int *)evio_array_resize(
-                              loop->fdchanges, sizeof(int),
-                              ++loop->fdchanges_count,
-                              &loop->fdchanges_total);
-        loop->fdchanges[loop->fdchanges_count - 1] = fd;
-    }
-
-    fds->flags |= flags | 1;
-}
-
-static __evio_inline __evio_nonnull(1)
-void evio_fd_event_nocheck(evio_loop *loop, int fd, uint16_t emask)
-{
-    evio_fds *fds = &loop->fds[fd];
-
-    for (evio_poll *w = (evio_poll *)fds->head; w; w = (evio_poll *)w->next) {
-        if (w->emask & emask)
-            evio_feed_event(loop, &w->base, w->emask & emask);
-    }
-}
-
-static __evio_inline __evio_nonnull(1)
-void evio_fd_event(evio_loop *loop, int fd, uint16_t emask)
-{
-    evio_fds *fds = &loop->fds[fd];
-
-    if (__evio_likely(!fds->flags))
-        evio_fd_event_nocheck(loop, fd, emask);
-}
-
-static __evio_inline __evio_nonnull(1, 2)
-void evio_feed_reverse(evio_loop *loop, evio_base *base)
-{
-    loop->reverse = (evio_base **)evio_array_resize(
-                        loop->reverse, sizeof(evio_base *),
-                        ++loop->reverse_count, &loop->reverse_total);
-    loop->reverse[loop->reverse_count - 1] = base;
-}
-
-static __evio_inline __evio_nonnull(1)
-void evio_done_reverse(evio_loop *loop, uint16_t emask)
-{
     do {
-        evio_base *base = loop->reverse[--loop->reverse_count];
-        evio_feed_event(loop, base, emask);
-    } while (loop->reverse_count);
+        int fd = loop->fdchanges[--loop->fdchanges_count];
+        evio_fds *fds = &loop->fds[fd];
+
+        uint8_t flags = fds->flags;
+        fds->flags = 0;
+
+        uint8_t emask = fds->emask;
+        fds->emask = 0;
+
+        for (evio_poll *w = (evio_poll *)fds->head; w; w = (evio_poll *)w->next)
+            fds->emask |= w->emask;
+
+        fds->emask &= EVIO_READ | EVIO_WRITE;
+
+        if (!fds->emask)
+            continue;
+
+        if (fds->emask == emask && !(flags & EVIO_POLL))
+            continue;
+
+        uint8_t cache = fds->cache;
+        fds->cache = fds->emask;
+
+        ev.events = ((fds->emask & EVIO_READ)  ? EPOLLIN  : 0) |
+                    ((fds->emask & EVIO_WRITE) ? EPOLLOUT : 0);
+
+        ev.data.u64 = ((uint64_t)(uint32_t)fd) |
+                      ((uint64_t)(uint32_t)++fds->value << 32);
+
+        int op = emask && cache != fds->cache
+                 ? EPOLL_CTL_MOD
+                 : EPOLL_CTL_ADD;
+
+        if (__evio_likely(!epoll_ctl(loop->fd, op, fd, &ev)))
+            continue;
+
+        switch (errno) {
+            case EEXIST:
+                if (cache == fds->cache) {
+                    --fds->value;
+                    continue;
+                }
+                if (__evio_likely(!epoll_ctl(loop->fd, EPOLL_CTL_MOD, fd, &ev)))
+                    continue;
+                break;
+
+            case ENOENT:
+                if (__evio_likely(!epoll_ctl(loop->fd, EPOLL_CTL_ADD, fd, &ev)))
+                    continue;
+                break;
+
+            case EPERM:
+                if (!(cache & EVIO_FLAG)) {
+                    loop->fderrors = (int *)evio_array_resize(
+                                         loop->fderrors, sizeof(int),
+                                         ++loop->fderrors_count,
+                                         &loop->fderrors_total);
+                    loop->fderrors[loop->fderrors_count - 1] = fd;
+                }
+
+                fds->cache = EVIO_FLAG;
+                continue;
+        }
+
+        evio_queue_fd_errors(loop, fd);
+        --fds->value;
+    } while (loop->fdchanges_count);
 }
 
-static __evio_nonnull(1)
-void evio_timer_reinit(evio_loop *loop)
+static __evio_noinline __evio_nonnull(1)
+void evio_timer_update(evio_loop *loop)
 {
     if (!loop->timer_count || loop->timer[EVIO_HROOT].time >= loop->time)
         return;
 
     do {
-        evio_timer *w = (evio_timer *)loop->timer[EVIO_HROOT].w;
+        evio_timer *w = loop->timer[EVIO_HROOT].w;
 
         if (w->repeat) {
             w->time += w->repeat;
@@ -486,13 +547,14 @@ void evio_timer_reinit(evio_loop *loop)
             evio_timer_stop(loop, w);
         }
 
-        evio_feed_reverse(loop, &w->base);
-    } while (loop->timer_count && loop->timer[EVIO_HROOT].time < loop->time);
-
-    evio_done_reverse(loop, EVIO_TIMER);
+        evio_queue_event(loop, &w->base, EVIO_TIMER);
+    } while (
+        loop->timer_count &&
+        loop->timer[EVIO_HROOT].time < loop->time
+    );
 }
 
-static __evio_nonnull(1)
+static __evio_noinline __evio_nonnull(1)
 void evio_loop_reinit(evio_loop *loop)
 {
     if (__evio_likely(!loop->reinit))
@@ -506,78 +568,45 @@ void evio_loop_reinit(evio_loop *loop)
 
     for (int fd = 0; fd <= loop->maxfd; ++fd) {
         evio_fds *fds = &loop->fds[fd];
+
         if (fds->emask) {
             fds->emask = 0;
-            evio_fd_change(loop, fd, EVIO_POLL);
+            fds->cache = 0;
+            evio_queue_fd_change(loop, fd, EVIO_POLL);
         }
     }
 
-    if (loop->pipe.active) {
-        evio_loop_ref(loop);
+    if (loop->reinit > 1 && loop->pipe.active) {
+        evio_ref(loop);
         evio_poll_stop(loop, &loop->pipe);
 
         evio_pipe_init(loop);
-        evio_feed_event(loop, &loop->pipe.base, EVIO_CUSTOM);
+        evio_queue_event(loop, &loop->pipe.base, EVIO_POLL);
     }
 
     loop->reinit = 0;
 }
 
-static __evio_nonnull(1)
-void evio_epoll(evio_loop *loop, int timeout)
+static __evio_noinline __evio_nonnull(1)
+void evio_poll_wait(evio_loop *loop, int timeout)
 {
-    if (__evio_unlikely(loop->fdchanges_count)) {
-        struct epoll_event ev;
-        memset(&ev, 0, sizeof(ev));
+    if (__evio_unlikely(loop->fderrors_count))
+        timeout = 0;
 
-        for (size_t i = 0; i < loop->fdchanges_count; ++i) {
-            int fd = loop->fdchanges[i];
-            evio_fds *fds = &loop->fds[fd];
-
-            uint8_t emask = 0;
-            for (evio_poll *w = (evio_poll *)fds->head; w; w = (evio_poll *)w->next)
-                emask |= (uint8_t)w->emask;
-
-            if (emask && (fds->emask != emask || (fds->flags & EVIO_POLL))) {
-                ev.events = ((emask & EVIO_READ)  ? EPOLLIN  : 0) |
-                            ((emask & EVIO_WRITE) ? EPOLLOUT : 0);
-
-                ev.data.u64 = ((uint64_t)(uint32_t)fd) |
-                              ((uint64_t)(uint32_t)++fds->count << 32);
-
-                int op = fds->emask ? EPOLL_CTL_MOD : EPOLL_CTL_ADD;
-
-                if (__evio_unlikely(epoll_ctl(loop->fd, op, fd, &ev))) {
-                    if (__evio_unlikely(errno != EEXIST))
-                        abort();
-
-                    assert(op == EPOLL_CTL_ADD);
-
-                    if (__evio_unlikely(epoll_ctl(loop->fd, EPOLL_CTL_MOD, fd, &ev)))
-                        abort();
-                }
-            }
-
-            fds->emask = emask & (EVIO_READ | EVIO_WRITE);
-            fds->flags = 0;
-        }
-
-        loop->fdchanges_count = 0;
-    }
-
-    int count = epoll_wait(loop->fd, loop->events, loop->maxevents, timeout);
-    if (__evio_unlikely(count < 0)) {
-        assert(errno == EINTR);
+    int events_count = epoll_wait(loop->fd, loop->events, loop->maxevents, timeout);
+    if (__evio_unlikely(events_count < 0)) {
+        if (__evio_unlikely(errno != EINTR))
+            abort();
         return;
     }
 
-    for (size_t i = 0; i < (size_t)count; ++i) {
+    for (size_t i = events_count; i--;) {
         struct epoll_event *ev = &loop->events[i];
 
         int fd = (uint32_t)ev->data.u64;
         evio_fds *fds = &loop->fds[fd];
 
-        if (__evio_unlikely((uint32_t)fds->count != (uint32_t)(ev->data.u64 >> 32))) {
+        if (__evio_unlikely((uint32_t)fds->value != (uint32_t)(ev->data.u64 >> 32))) {
             loop->reinit = 1;
             continue;
         }
@@ -586,6 +615,8 @@ void evio_epoll(evio_loop *loop, int timeout)
                         (ev->events & (EPOLLOUT | EPOLLERR | EPOLLHUP) ? EVIO_WRITE : 0);
 
         if (__evio_unlikely(emask & ~fds->emask)) {
+            fds->cache = fds->emask;
+
             ev->events = ((fds->emask & EVIO_READ)  ? EPOLLIN  : 0) |
                          ((fds->emask & EVIO_WRITE) ? EPOLLOUT : 0);
 
@@ -597,28 +628,58 @@ void evio_epoll(evio_loop *loop, int timeout)
             }
         }
 
-        evio_fd_event(loop, fd, emask);
+        if (__evio_likely(!fds->flags))
+            evio_queue_fd_events(loop, fd, emask);
     }
 
-    if (__evio_unlikely(count == loop->maxevents &&
-                        count < EVIO_MAX_EVENTS)) {
+    if (__evio_unlikely(events_count == loop->maxevents &&
+                        events_count < EVIO_MAX_EVENTS)) {
         loop->events = (struct epoll_event *)evio_array_resize(
                            loop->events, sizeof(struct epoll_event),
-                           (size_t)count + 1, &loop->events_total);
+                           (size_t)events_count + 1, &loop->events_total);
         loop->maxevents = loop->events_total < EVIO_MAX_EVENTS ?
                           loop->events_total : EVIO_MAX_EVENTS;
     }
+
+    for (size_t i = loop->fderrors_count; i--;) {
+        int fd = loop->fderrors[i];
+        evio_fds *fds = &loop->fds[fd];
+
+        if ((fds->cache & EVIO_FLAG) && fds->emask) {
+            if (__evio_likely(!fds->flags))
+                evio_queue_fd_events(loop, fd, fds->emask);
+        } else {
+            loop->fderrors[i] = loop->fderrors[--loop->fderrors_count];
+            fds->cache = 0;
+        }
+    }
 }
 
-static __evio_inline __evio_nonnull(1, 2)
-void evio_feed_events(evio_loop *loop, evio_base **base, size_t count, uint16_t emask)
+void evio_invoke_pending(evio_loop *loop)
 {
-    for (size_t i = 0; i < count; ++i)
-        evio_feed_event(loop, base[i], emask);
+    while (loop->pending_count) {
+        evio_pending *p = (evio_pending *)loop->pending.data + --loop->pending_count;
+        p->base->pending = 0;
+        p->base->cb(loop, p->base, p->emask);
+    }
+}
+
+void evio_clear_pending(evio_loop *loop, evio_base *base)
+{
+    if (__evio_unlikely(base->pending)) {
+        evio_pending *p = (evio_pending *)loop->pending.data + base->pending - 1;
+        p->base = &loop->pending;
+        base->pending = 0;
+    }
+}
+
+size_t evio_pending_count(evio_loop *loop)
+{
+    return loop->pending_count;
 }
 
 static __evio_inline __evio_nonnull(1) __evio_nodiscard
-uint64_t evio_loop_gettime(evio_loop *loop)
+uint64_t evio_gettime(evio_loop *loop)
 {
     struct timespec ts;
     if (__evio_unlikely(clock_gettime(loop->clock_id, &ts)))
@@ -647,12 +708,12 @@ evio_loop *evio_loop_new(int maxevents)
         loop->clock_id = CLOCK_MONOTONIC;
     }
 
-    loop->time = evio_loop_gettime(loop);
+    loop->time = evio_gettime(loop);
 
-    evio_base_init(&loop->pending, evio_dummy_cb);
+    evio_init(&loop->pending, evio_dummy_cb);
     loop->pending.data = NULL;
 
-    evio_base_init(&loop->pipe.base, evio_pipe_cb);
+    evio_init(&loop->pipe.base, evio_pipe_cb);
     loop->pipe.data = NULL;
     loop->pipe.fd = -1;
 
@@ -667,12 +728,11 @@ evio_loop *evio_loop_new(int maxevents)
 
 void evio_loop_free(evio_loop *loop)
 {
-    if (__evio_unlikely(!loop))
-        return;
+    loop->pending_count = 0;
 
     if (loop->cleanup_count) {
-        evio_feed_events(loop, (evio_base **)loop->cleanup,
-                         loop->cleanup_count, EVIO_CLEANUP);
+        evio_queue_events(loop, (evio_base **)loop->cleanup,
+                          loop->cleanup_count, EVIO_CLEANUP);
         evio_invoke_pending(loop);
     }
 
@@ -704,9 +764,9 @@ void evio_loop_free(evio_loop *loop)
     }
 
     evio_free(loop->pending.data);
-    evio_free(loop->reverse);
     evio_free(loop->fds);
     evio_free(loop->fdchanges);
+    evio_free(loop->fderrors);
     evio_free(loop->timer);
     evio_free(loop->idle);
     evio_free(loop->async);
@@ -717,53 +777,56 @@ void evio_loop_free(evio_loop *loop)
     evio_free(loop);
 }
 
-uint64_t evio_loop_time(evio_loop *loop)
+void evio_loop_fork(evio_loop *loop)
+{
+    loop->reinit = 2;
+}
+
+uint64_t evio_time(evio_loop *loop)
 {
     return loop->time;
 }
 
-uint64_t evio_loop_update_time(evio_loop *loop)
+void evio_update_time(evio_loop *loop)
 {
-    return loop->time = evio_loop_gettime(loop);
+    loop->time = evio_gettime(loop);
 }
 
-void evio_loop_ref(evio_loop *loop)
+void evio_ref(evio_loop *loop)
 {
     if (__evio_unlikely(++loop->refcount == 0))
         abort();
 }
 
-void evio_loop_unref(evio_loop *loop)
+void evio_unref(evio_loop *loop)
 {
     if (__evio_unlikely(loop->refcount-- == 0))
         abort();
 }
 
-size_t evio_loop_refcount(evio_loop *loop)
+size_t evio_refcount(evio_loop *loop)
 {
     return loop->refcount;
 }
 
-void *evio_loop_set_data(evio_loop *loop, void *data)
+void evio_set_userdata(evio_loop *loop, void *data)
 {
-    void *ptr = loop->data;
     loop->data = data;
-    return ptr;
 }
 
-void *evio_loop_get_data(evio_loop *loop)
+void *evio_get_userdata(evio_loop *loop)
 {
     return loop->data;
 }
 
 static __evio_inline __evio_nonnull(1) __evio_nodiscard
-int evio_loop_timeout(evio_loop *loop)
+int evio_timeout(evio_loop *loop)
 {
-    if (loop->done || !loop->refcount ||
-        loop->pending_count ||
-        loop->idle_count) {
+    if (!loop->refcount || loop->idle_count)
         return 0;
-    }
+
+    if (atomic_load_explicit(&loop->pipe_wanted, memory_order_acquire))
+        return 0;
 
     if (!loop->timer_count)
         return -1;
@@ -779,16 +842,16 @@ int evio_loop_timeout(evio_loop *loop)
     return diff;
 }
 
-size_t evio_loop_run(evio_loop *loop, uint8_t run_mode)
+int evio_run(evio_loop *loop, uint8_t flags)
 {
-    run_mode &= EVIO_RUN_NOWAIT | EVIO_RUN_ONCE;
+    flags &= EVIO_RUN_NOWAIT | EVIO_RUN_ONCE;
     loop->done = EVIO_BREAK_CANCEL;
     evio_invoke_pending(loop);
 
     do {
         if (loop->prepare_count) {
-            evio_feed_events(loop, (evio_base **)loop->prepare,
-                             loop->prepare_count, EVIO_PREPARE);
+            evio_queue_events(loop, (evio_base **)loop->prepare,
+                              loop->prepare_count, EVIO_PREPARE);
             evio_invoke_pending(loop);
         }
 
@@ -796,68 +859,68 @@ size_t evio_loop_run(evio_loop *loop, uint8_t run_mode)
             break;
 
         evio_loop_reinit(loop);
-        loop->time = evio_loop_gettime(loop);
+        evio_poll_update(loop);
+        loop->time = evio_gettime(loop);
 
-        atomic_store_explicit(&loop->pipe_write_wanted, 1, memory_order_seq_cst);
+        atomic_store_explicit(&loop->pipe_locked, 1, memory_order_seq_cst);
+        evio_poll_wait(loop, (flags & EVIO_RUN_NOWAIT) ? 0 : evio_timeout(loop));
+        atomic_store_explicit(&loop->pipe_locked, 0, memory_order_relaxed);
 
-        int timeout = (run_mode & EVIO_RUN_NOWAIT)
-                      ? 0 : evio_loop_timeout(loop);
-        evio_epoll(loop, timeout);
+        if (atomic_load_explicit(&loop->pipe_wanted, memory_order_acquire))
+            evio_queue_event(loop, &loop->pipe.base, EVIO_POLL);
 
-        atomic_store_explicit(&loop->pipe_write_wanted, 0, memory_order_relaxed);
-
-        if (atomic_load_explicit(&loop->pipe_write_skipped, memory_order_acquire)) {
-            assert(&loop->pipe.active);
-            evio_feed_event(loop, &loop->pipe.base, EVIO_CUSTOM);
-        }
-
-        loop->time = evio_loop_gettime(loop);
-        evio_timer_reinit(loop);
+        loop->time = evio_gettime(loop);
+        evio_timer_update(loop);
 
         if (loop->idle_count && !loop->pending_count) {
-            evio_feed_events(loop, (evio_base **)loop->idle,
-                             loop->idle_count, EVIO_IDLE);
-        }
-
-        if (loop->check_count) {
-            evio_feed_events(loop, (evio_base **)loop->check,
-                             loop->check_count, EVIO_CHECK);
+            evio_queue_events(loop, (evio_base **)loop->idle,
+                              loop->idle_count, EVIO_IDLE);
         }
 
         evio_invoke_pending(loop);
+
+        if (loop->check_count) {
+            evio_queue_events(loop, (evio_base **)loop->check,
+                              loop->check_count, EVIO_CHECK);
+            evio_invoke_pending(loop);
+        }
     } while (__evio_likely(
-                 loop->refcount > 0 &&
+                 loop->refcount &&
                  loop->done == EVIO_BREAK_CANCEL &&
-                 run_mode == EVIO_RUN_DEFAULT
+                 flags == EVIO_RUN_DEFAULT
              ));
 
     if (loop->done == EVIO_BREAK_ONE)
         loop->done = EVIO_BREAK_CANCEL;
 
-    return loop->refcount;
+    return loop->refcount ||
+           loop->pending_count;
 }
 
-void evio_loop_break(evio_loop *loop, uint8_t break_mode)
+void evio_break(evio_loop *loop, uint8_t state)
 {
-    loop->done = break_mode & (EVIO_BREAK_ONE | EVIO_BREAK_ALL);
+    loop->done = state & (EVIO_BREAK_ONE | EVIO_BREAK_ALL);
 }
 
-void evio_loop_walk(evio_loop *loop, evio_cb cb, uint16_t emask)
+void evio_walk(evio_loop *loop, evio_cb cb, uint16_t emask)
 {
-    if (emask & EVIO_POLL) {
+    if (emask & (EVIO_POLL | EVIO_READ | EVIO_WRITE)) {
         for (int fd = 0; fd <= loop->maxfd; ++fd) {
             evio_fds *fds = &loop->fds[fd];
 
-            for (evio_list *w = fds->head; w; w = w->next) {
-                if (__evio_likely(w->cb != evio_pipe_cb))
-                    cb(loop, &w->base, EVIO_WALK | EVIO_POLL);
+            for (evio_poll *w = (evio_poll *)fds->head; w; w = (evio_poll *)w->next) {
+                if (__evio_unlikely(w->cb == evio_pipe_cb))
+                    continue;
+
+                if (emask & (EVIO_POLL | w->emask))
+                    cb(loop, &w->base, EVIO_WALK | EVIO_POLL | w->emask);
             }
         }
     }
 
     if (emask & EVIO_TIMER) {
         for (size_t i = loop->timer_count + EVIO_HROOT; i-- > EVIO_HROOT;) {
-            evio_timer *w = (evio_timer *)loop->timer[i].w;
+            evio_timer *w = loop->timer[i].w;
             cb(loop, &w->base, EVIO_WALK | EVIO_TIMER);
         }
     }
@@ -912,30 +975,20 @@ void evio_loop_walk(evio_loop *loop, evio_cb cb, uint16_t emask)
 
 void evio_feed_event(evio_loop *loop, evio_base *base, uint16_t emask)
 {
-    if (__evio_unlikely(base->pending)) {
-        evio_pending *p = (evio_pending *)loop->pending.data + base->pending - 1;
-        p->emask |= emask;
-    } else {
-        base->pending = ++loop->pending_count;
-        loop->pending.data = evio_array_resize(
-                                 loop->pending.data, sizeof(evio_pending),
-                                 loop->pending_count, &loop->pending_total);
-        evio_pending *p = (evio_pending *)loop->pending.data + base->pending - 1;
-        p->base = base;
-        p->emask = emask;
-    }
+    if (__evio_likely(base->active))
+        evio_queue_event(loop, base, emask);
 }
 
-void evio_feed_fd_event(evio_loop *loop, int fd, uint16_t emask)
+void evio_feed_fd_event(evio_loop *loop, int fd, uint8_t emask)
 {
     if (__evio_likely(fd >= 0 && fd <= loop->maxfd))
-        evio_fd_event_nocheck(loop, fd, emask);
+        evio_queue_fd_events(loop, fd, emask);
 }
 
-void evio_feed_fd_close(evio_loop *loop, int fd)
+void evio_feed_fd_error(evio_loop *loop, int fd)
 {
     if (__evio_likely(fd >= 0 && fd <= loop->maxfd))
-        evio_fd_purge(loop, fd);
+        evio_queue_fd_errors(loop, fd);
 }
 
 void evio_feed_signal(int signum)
@@ -951,13 +1004,8 @@ void evio_feed_signal(int signum)
 
     atomic_store_explicit(&sig->pending, 1, memory_order_release);
 
-    uint8_t signal_expected = 0;
-    if (atomic_compare_exchange_strong_explicit(&loop->signal_pending,
-                                                &signal_expected, 1,
-                                                memory_order_acq_rel,
-                                                memory_order_relaxed)) {
+    if (!atomic_exchange_explicit(&loop->signal_pending, 1, memory_order_acq_rel))
         evio_pipe_write(loop);
-    }
 }
 
 void evio_feed_signal_event(evio_loop *loop, int signum)
@@ -974,25 +1022,26 @@ void evio_feed_signal_event(evio_loop *loop, int signum)
     atomic_store_explicit(&sig->pending, 0, memory_order_release);
 
     for (evio_list *w = sig->head; w; w = w->next)
-        evio_feed_event(loop, &w->base, EVIO_SIGNAL);
+        evio_queue_event(loop, &w->base, EVIO_SIGNAL);
 }
 
-void evio_invoke_pending(evio_loop *loop)
+void evio_feed_signal_error(evio_loop *loop, int signum)
 {
-    while (loop->pending_count) {
-        evio_pending *p = (evio_pending *)loop->pending.data + --loop->pending_count;
-        p->base->pending = 0;
-        p->base->cb(loop, p->base, p->emask);
-    }
-}
+    if (__evio_unlikely(signum <= 0 || signum >= NSIG))
+        return;
 
-static __evio_inline __evio_nonnull(1, 2)
-void evio_clear_pending(evio_loop *loop, evio_base *base)
-{
-    if (base->pending) {
-        evio_pending *p = (evio_pending *)loop->pending.data + base->pending - 1;
-        p->base = &loop->pending;
-        base->pending = 0;
+    evio_sig *sig = &signals[signum - 1];
+
+    evio_loop *ptr = atomic_load_explicit(&sig->loop, memory_order_acquire);
+    if (__evio_unlikely(!ptr || ptr != loop))
+        return;
+
+    atomic_store_explicit(&sig->pending, 0, memory_order_release);
+
+    while (sig->head) {
+        evio_signal *w = (evio_signal *)sig->head;
+        evio_signal_stop(loop, w);
+        evio_queue_event(loop, &w->base, EVIO_SIGNAL | EVIO_ERROR);
     }
 }
 
@@ -1001,11 +1050,8 @@ void evio_poll_start(evio_loop *loop, evio_poll *w)
     if (__evio_unlikely(w->active))
         return;
 
-    if (__evio_unlikely(w->fd < 0))
-        abort();
-
     w->active = 1;
-    evio_loop_ref(loop);
+    evio_ref(loop);
 
     loop->fds = (evio_fds *)evio_array_resize(
                     loop->fds, sizeof(evio_fds),
@@ -1021,7 +1067,7 @@ void evio_poll_start(evio_loop *loop, evio_poll *w)
     evio_fds *fds = &loop->fds[w->fd];
     evio_list_insert(&fds->head, &w->list);
 
-    evio_fd_change(loop, w->fd, w->emask & EVIO_POLL);
+    evio_queue_fd_change(loop, w->fd, w->emask & EVIO_POLL);
     w->emask &= ~EVIO_POLL;
 }
 
@@ -1032,16 +1078,13 @@ void evio_poll_stop(evio_loop *loop, evio_poll *w)
     if (__evio_unlikely(!w->active))
         return;
 
-    if (__evio_unlikely(w->fd < 0 || w->fd > loop->maxfd))
-        abort();
-
     evio_fds *fds = &loop->fds[w->fd];
     evio_list_remove(&fds->head, &w->list);
 
-    evio_loop_unref(loop);
+    evio_unref(loop);
     w->active = 0;
 
-    evio_fd_change(loop, w->fd, 0);
+    evio_queue_fd_change(loop, w->fd, 0);
 }
 
 void evio_timer_start(evio_loop *loop, evio_timer *w)
@@ -1049,8 +1092,15 @@ void evio_timer_start(evio_loop *loop, evio_timer *w)
     if (__evio_unlikely(w->active))
         return;
 
+    uint64_t time = w->time + loop->time;
+    if (__evio_unlikely(time < w->time)) {
+        w->time = UINT64_MAX;
+    } else {
+        w->time = time;
+    }
+
     w->active = ++loop->timer_count + EVIO_HROOT - 1;
-    evio_loop_ref(loop);
+    evio_ref(loop);
 
     loop->timer = (evio_node *)evio_array_resize(
                       loop->timer, sizeof(evio_node),
@@ -1058,7 +1108,7 @@ void evio_timer_start(evio_loop *loop, evio_timer *w)
 
     evio_node *node = &loop->timer[w->active];
     node->w = w;
-    node->time = w->time += loop->time;
+    node->time = w->time;
 
     evio_heap_up(loop->timer, w->active);
 }
@@ -1070,7 +1120,6 @@ void evio_timer_stop(evio_loop *loop, evio_timer *w)
     if (__evio_unlikely(!w->active))
         return;
 
-    assert(loop->timer[w->active].w == w);
     size_t count = --loop->timer_count;
 
     if (__evio_likely(w->active < count + EVIO_HROOT)) {
@@ -1084,7 +1133,7 @@ void evio_timer_stop(evio_loop *loop, evio_timer *w)
         w->time = 0;
     }
 
-    evio_loop_unref(loop);
+    evio_unref(loop);
     w->active = 0;
 }
 
@@ -1095,6 +1144,9 @@ void evio_timer_again(evio_loop *loop, evio_timer *w)
     if (w->active) {
         if (w->repeat) {
             w->time = loop->time + w->repeat;
+            if (__evio_unlikely(w->time < loop->time))
+                w->time = UINT64_MAX;
+
             loop->timer[w->active].time = w->time;
             evio_heap_adjust(loop->timer, w->active, loop->timer_count);
         } else {
@@ -1119,23 +1171,16 @@ void evio_signal_start(evio_loop *loop, evio_signal *w)
     if (__evio_unlikely(w->active))
         return;
 
-    if (__evio_unlikely(w->signum <= 0 || w->signum >= NSIG))
-        abort();
-
     evio_sig *sig = &signals[w->signum - 1];
 
-    evio_loop *ptr = NULL;
-    if (!atomic_compare_exchange_strong_explicit(&sig->loop, &ptr, loop,
-                                                 memory_order_acq_rel,
-                                                 memory_order_acquire)) {
-        if (__evio_unlikely(ptr != loop))
-            abort();
-    }
+    evio_loop *ptr = atomic_exchange_explicit(&sig->loop, loop, memory_order_acq_rel);
+    if (__evio_unlikely(ptr && ptr != loop))
+        abort();
 
     evio_list_insert(&sig->head, &w->list);
 
     w->active = 1;
-    evio_loop_ref(loop);
+    evio_ref(loop);
 
     if (!w->next) {
         evio_pipe_init(loop);
@@ -1143,10 +1188,8 @@ void evio_signal_start(evio_loop *loop, evio_signal *w)
         struct sigaction sa;
         memset(&sa, 0, sizeof(sa));
         sa.sa_handler = evio_feed_signal;
+        sigfillset(&sa.sa_mask);
         sa.sa_flags = SA_RESTART;
-
-        if (__evio_unlikely(sigfillset(&sa.sa_mask)))
-            abort();
 
         if (__evio_unlikely(sigaction(w->signum, &sa, NULL)))
             abort();
@@ -1160,15 +1203,7 @@ void evio_signal_stop(evio_loop *loop, evio_signal *w)
     if (__evio_unlikely(!w->active))
         return;
 
-    if (__evio_unlikely(w->signum <= 0 || w->signum >= NSIG))
-        abort();
-
     evio_sig *sig = &signals[w->signum - 1];
-
-    evio_loop *ptr = atomic_load_explicit(&sig->loop, memory_order_acquire);
-    if (__evio_unlikely(!ptr || ptr != loop))
-        abort();
-
     evio_list_remove(&sig->head, &w->list);
 
     if (!sig->head) {
@@ -1182,7 +1217,7 @@ void evio_signal_stop(evio_loop *loop, evio_signal *w)
         atomic_store_explicit(&sig->loop, NULL, memory_order_release);
     }
 
-    evio_loop_unref(loop);
+    evio_unref(loop);
     w->active = 0;
 }
 
@@ -1191,11 +1226,11 @@ void evio_async_start(evio_loop *loop, evio_async *w)
     if (__evio_unlikely(w->active))
         return;
 
-    w->status = 0;
     evio_pipe_init(loop);
+    atomic_store_explicit(&w->status, 0, memory_order_release);
 
     w->active = ++loop->async_count;
-    evio_loop_ref(loop);
+    evio_ref(loop);
 
     loop->async = (evio_async **)evio_array_resize(
                       loop->async, sizeof(evio_async *),
@@ -1213,7 +1248,7 @@ void evio_async_stop(evio_loop *loop, evio_async *w)
     loop->async[w->active - 1] = loop->async[--loop->async_count];
     loop->async[w->active - 1]->active = w->active;
 
-    evio_loop_unref(loop);
+    evio_unref(loop);
     w->active = 0;
 }
 
@@ -1221,13 +1256,8 @@ void evio_async_send(evio_loop *loop, evio_async *w)
 {
     atomic_store_explicit(&w->status, 1, memory_order_release);
 
-    uint8_t async_expected = 0;
-    if (atomic_compare_exchange_strong_explicit(&loop->async_pending,
-                                                &async_expected, 1,
-                                                memory_order_acq_rel,
-                                                memory_order_relaxed)) {
+    if (!atomic_exchange_explicit(&loop->async_pending, 1, memory_order_acq_rel))
         evio_pipe_write(loop);
-    }
 }
 
 void evio_idle_start(evio_loop *loop, evio_idle *w)
@@ -1236,7 +1266,7 @@ void evio_idle_start(evio_loop *loop, evio_idle *w)
         return;
 
     w->active = ++loop->idle_count;
-    evio_loop_ref(loop);
+    evio_ref(loop);
 
     loop->idle = (evio_idle **)evio_array_resize(
                      loop->idle, sizeof(evio_idle *),
@@ -1254,7 +1284,7 @@ void evio_idle_stop(evio_loop *loop, evio_idle *w)
     loop->idle[w->active - 1] = loop->idle[--loop->idle_count];
     loop->idle[w->active - 1]->active = w->active;
 
-    evio_loop_unref(loop);
+    evio_unref(loop);
     w->active = 0;
 }
 
@@ -1264,7 +1294,7 @@ void evio_prepare_start(evio_loop *loop, evio_prepare *w)
         return;
 
     w->active = ++loop->prepare_count;
-    evio_loop_ref(loop);
+    evio_ref(loop);
 
     loop->prepare = (evio_prepare **)evio_array_resize(
                         loop->prepare, sizeof(evio_prepare *),
@@ -1282,7 +1312,7 @@ void evio_prepare_stop(evio_loop *loop, evio_prepare *w)
     loop->prepare[w->active - 1] = loop->prepare[--loop->prepare_count];
     loop->prepare[w->active - 1]->active = w->active;
 
-    evio_loop_unref(loop);
+    evio_unref(loop);
     w->active = 0;
 }
 
@@ -1292,7 +1322,7 @@ void evio_check_start(evio_loop *loop, evio_check *w)
         return;
 
     w->active = ++loop->check_count;
-    evio_loop_ref(loop);
+    evio_ref(loop);
 
     loop->check = (evio_check **)evio_array_resize(
                       loop->check, sizeof(evio_check *),
@@ -1310,7 +1340,7 @@ void evio_check_stop(evio_loop *loop, evio_check *w)
     loop->check[w->active - 1] = loop->check[--loop->check_count];
     loop->check[w->active - 1]->active = w->active;
 
-    evio_loop_unref(loop);
+    evio_unref(loop);
     w->active = 0;
 }
 
@@ -1320,7 +1350,6 @@ void evio_cleanup_start(evio_loop *loop, evio_cleanup *w)
         return;
 
     w->active = ++loop->cleanup_count;
-    //evio_loop_ref(loop);
 
     loop->cleanup = (evio_cleanup **)evio_array_resize(
                         loop->cleanup, sizeof(evio_cleanup *),
@@ -1338,6 +1367,5 @@ void evio_cleanup_stop(evio_loop *loop, evio_cleanup *w)
     loop->cleanup[w->active - 1] = loop->cleanup[--loop->cleanup_count];
     loop->cleanup[w->active - 1]->active = w->active;
 
-    //evio_loop_unref(loop);
     w->active = 0;
 }
