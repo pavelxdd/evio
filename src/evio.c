@@ -198,6 +198,8 @@ struct evio_loop {
     struct epoll_event *events;
     size_t events_total;
     int maxevents;
+
+    sigset_t epoll_sigmask;
 };
 
 static __evio_inline __evio_nonnull(4) __evio_nodiscard
@@ -593,7 +595,11 @@ void evio_poll_wait(evio_loop *loop, int timeout)
     if (__evio_unlikely(loop->fderrors_count))
         timeout = 0;
 
-    int events_count = epoll_wait(loop->fd, loop->events, loop->maxevents, timeout);
+    int events_count = epoll_pwait(loop->fd,
+                                   loop->events,
+                                   loop->maxevents,
+                                   timeout,
+                                   &loop->epoll_sigmask);
     if (__evio_unlikely(events_count < 0)) {
         if (__evio_unlikely(errno != EINTR))
             abort();
@@ -723,6 +729,9 @@ evio_loop *evio_loop_new(int maxevents)
     loop->events = (struct epoll_event *)evio_array_resize(
                        loop->events, sizeof(struct epoll_event),
                        loop->maxevents, &loop->events_total);
+
+    sigemptyset(&loop->epoll_sigmask);
+    sigaddset(&loop->epoll_sigmask, SIGPROF);
     return loop;
 }
 
