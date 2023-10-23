@@ -1,0 +1,2 @@
+option('analyzer', type: 'boolean', value: false,
+       description: 'use GCC -fanalyzer flag')

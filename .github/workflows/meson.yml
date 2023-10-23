@@ -1,0 +1,94 @@
+name: meson
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+
+jobs:
+  linux:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-20.04
+          - ubuntu-22.04
+        buildtype:
+          - plain
+          - debug
+          - debugoptimized
+          - release
+          - minsize
+        cc:
+          - gcc
+          - clang
+    env:
+      CC: ${{ matrix.cc }}
+    steps:
+    - uses: actions/checkout@main
+    - run: sudo apt-get update
+    - run: sudo apt-get install -yqq --no-install-recommends meson ninja-build
+    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }}
+    - run: ninja -Cbuild -v
+
+  alpine:
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - alpine:edge
+          - alpine:latest
+        buildtype:
+          - plain
+          - debug
+          - debugoptimized
+          - release
+          - minsize
+        cc:
+          - gcc
+          - clang
+    env:
+      CC: ${{ matrix.cc }}
+    steps:
+    - uses: actions/checkout@main
+    - run: apk --no-cache add build-base meson ${{ matrix.cc }}
+    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }}
+    - run: meson compile -Cbuild -v
+
+  tcc:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:edge
+    strategy:
+      fail-fast: false
+      matrix:
+        buildtype:
+          - plain
+          - debug
+          - debugoptimized
+          - release
+          - minsize
+    env:
+      CC: tcc
+    steps:
+    - uses: actions/checkout@main
+    - run: echo 'https://dl-cdn.alpinelinux.org/alpine/edge/testing' >> /etc/apk/repositories
+    - run: apk --no-cache add build-base muon tcc samurai
+    - run: muon setup -Dbuildtype=${{ matrix.buildtype }} build
+    - run: samu -Cbuild -v
+
+  analyzer:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@main
+    - run: sudo apt-get update
+    - run: sudo apt-get install -yqq --no-install-recommends meson
+    - run: meson setup build -Dbuildtype=debug -Danalyzer=true
+    - run: meson compile -Cbuild -v

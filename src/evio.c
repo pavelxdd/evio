@@ -29,6 +29,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <time.h>
+#include <unistd.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 
@@ -208,7 +209,7 @@ void *evio_array_resize(void *ptr, size_t size, size_t count, size_t *total)
     if (__evio_likely(*total >= count))
         return ptr;
 
-    *total = 1ull << (ULLONG_WIDTH - __builtin_clzll(count));
+    *total = 1ULL << (sizeof(unsigned long long) * 8 - __builtin_clzll(count));
     return evio_realloc(ptr, *total * size);
 }
 
@@ -691,8 +692,8 @@ uint64_t evio_gettime(evio_loop *loop)
     if (__evio_unlikely(clock_gettime(loop->clock_id, &ts)))
         abort();
 
-    return (uint64_t)ts.tv_sec * 1000ull +
-           (uint64_t)ts.tv_nsec / 1000000ull;
+    return (uint64_t)ts.tv_sec * 1000ULL +
+           (uint64_t)ts.tv_nsec / 1000000ULL;
 }
 
 evio_loop *evio_loop_new(int maxevents)
