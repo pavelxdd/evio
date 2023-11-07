@@ -130,28 +130,6 @@ jobs:
     - run: meson setup build -Dbuildtype=${{ matrix.buildtype }}
     - run: meson compile -Cbuild -v
 
-  tcc:
-    runs-on: ubuntu-latest
-    container:
-      image: alpine:edge
-    strategy:
-      fail-fast: false
-      matrix:
-        buildtype:
-          - plain
-          - debug
-          - debugoptimized
-          - release
-          - minsize
-    env:
-      CC: tcc
-    steps:
-    - uses: actions/checkout@main
-    - run: echo 'https://dl-cdn.alpinelinux.org/alpine/edge/testing' >> /etc/apk/repositories
-    - run: apk --no-cache add build-base muon tcc samurai
-    - run: muon setup -Dbuildtype=${{ matrix.buildtype }} build
-    - run: samu -Cbuild -v
-
   analyzer:
     runs-on: ubuntu-latest
     steps:
