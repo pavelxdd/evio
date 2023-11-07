@@ -72,6 +72,37 @@ jobs:
     - run: meson setup build -Dbuildtype=${{ matrix.buildtype }}
     - run: meson compile -Cbuild -v
 
+  debian-sid:
+    runs-on: ubuntu-22.04
+    container:
+      image: debian:sid
+    strategy:
+      fail-fast: false
+      matrix:
+        buildtype:
+          - plain
+          - debug
+          - debugoptimized
+          - release
+          - minsize
+        cc:
+          - gcc
+          - gcc-12
+          - gcc-13
+          - clang
+          - clang-16
+          - clang-17
+    env:
+      CC: ${{ matrix.cc }}
+    steps:
+    - uses: actions/checkout@main
+    - run: apt-get update && apt-get install -yqq --no-install-recommends ca-certificates gpg curl
+    - run: curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --no-tty --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg
+    - run: echo "deb http://apt.llvm.org/unstable/ llvm-toolchain-17 main" >> /etc/apt/sources.list.d/llvm.list
+    - run: apt-get update && apt-get install -yqq --no-install-recommends build-essential meson ${{ matrix.cc }}
+    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }}
+    - run: meson compile -Cbuild -v
+
   alpine:
     runs-on: ubuntu-latest
     container:
