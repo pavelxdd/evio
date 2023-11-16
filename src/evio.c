@@ -135,6 +135,7 @@ typedef struct {
     evio_list *head;
     _Atomic(evio_loop *) loop;
     _Atomic uint8_t pending;
+    struct sigaction sa_old;
 } __evio_aligned(EVIO_CACHELINE) evio_sig;
 
 static evio_sig signals[NSIG - 1] = { 0 };
@@ -752,11 +753,7 @@ void evio_loop_free(evio_loop *loop)
         if (atomic_load_explicit(&sig->loop, memory_order_acquire) == loop) {
             sig->head = NULL;
 
-            struct sigaction sa;
-            memset(&sa, 0, sizeof(sa));
-            sa.sa_handler = SIG_DFL;
-
-            if (__evio_unlikely(sigaction(i + 1, &sa, NULL)))
+            if (__evio_unlikely(sigaction(i + 1, &sig->sa_old, NULL)))
                 abort();
 
             atomic_store_explicit(&sig->loop, NULL, memory_order_release);
@@ -1201,7 +1198,7 @@ void evio_signal_start(evio_loop *loop, evio_signal *w)
         sigfillset(&sa.sa_mask);
         sa.sa_flags = SA_RESTART;
 
-        if (__evio_unlikely(sigaction(w->signum, &sa, NULL)))
+        if (__evio_unlikely(sigaction(w->signum, &sa, &sig->sa_old)))
             abort();
     }
 }
@@ -1217,11 +1214,7 @@ void evio_signal_stop(evio_loop *loop, evio_signal *w)
     evio_list_remove(&sig->head, &w->list);
 
     if (!sig->head) {
-        struct sigaction sa;
-        memset(&sa, 0, sizeof(sa));
-        sa.sa_handler = SIG_DFL;
-
-        if (__evio_unlikely(sigaction(w->signum, &sa, NULL)))
+        if (__evio_unlikely(sigaction(w->signum, &sig->sa_old, NULL)))
             abort();
 
         atomic_store_explicit(&sig->loop, NULL, memory_order_release);
