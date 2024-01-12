@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Pavel Otchertsov <pavel.otchertsov@gmail.com>
+ * Copyright (c) 2023-2024 Pavel Otchertsov <pavel.otchertsov@gmail.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -21,10 +21,6 @@
  */
 
 #pragma once
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include <stddef.h>
 #include <stdint.h>
@@ -509,7 +505,3 @@ typedef union evio_watcher {
 #undef EVIO_COMMON
 #undef EVIO_BASE
 #undef EVIO_LIST
-
-#ifdef __cplusplus
-}
-#endif
