@@ -1,27 +1,37 @@
 repos:
-- repo: local
-  hooks:
-  - id: astyle
-    name: astyle
-    entry: astyle -Q -n
-    args: ['--options=.astylerc']
-    language: system
-    types: [c]
+  - repo: local
+    hooks:
+    - id: astyle
+      name: astyle
+      entry: astyle -Q -n
+      args: ['--options=.astylerc']
+      language: system
+      types: [c]
 
-- repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v4.5.0
-  hooks:
-  - id: check-case-conflict
-  - id: check-merge-conflict
-  - id: fix-byte-order-marker
-  - id: trailing-whitespace
-  - id: end-of-file-fixer
-  - id: mixed-line-ending
-    args: ['--fix=lf']
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-json
+      - id: check-yaml
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: check-symlinks
+      - id: destroyed-symlinks
+      - id: detect-private-key
+      - id: fix-byte-order-marker
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+      - id: end-of-file-fixer
+        exclude_types: [diff, image]
+      - id: trailing-whitespace
+        exclude_types: [diff, image]
+      - id: forbid-submodules
 
-- repo: https://github.com/adrienverge/yamllint
-  rev: v1.32.0
-  hooks:
-  - id: yamllint
-    args: ['-d=relaxed']
-    types: [yaml]
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.37.1
+    hooks:
+    - id: yamllint
+      args: ['-d=relaxed']
+      types: [yaml]

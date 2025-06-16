@@ -1,30 +1,27 @@
-/*
- * Copyright (c) 2023-2024 Pavel Otchertsov <pavel.otchertsov@gmail.com>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
-
 #pragma once
 
+/**
+ * @file evio.h
+ * @brief The main public header for the `evio` library.
+ *
+ * An application should include this single file to access all public features.
+ * It aggregates all other public headers and defines the core types,
+ * enumerations, and base structures that form the foundation of the library.
+ */
+
+// IWYU pragma: begin_exports
+
 #include <stddef.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <stdint.h>
+#include <stdbool.h>
+#include <stdalign.h>
 #include <stdatomic.h>
+#include <signal.h>
+#include <assert.h>
+
+// IWYU pragma: end_exports
 
 #ifndef __evio_has_attribute
 #   ifdef __has_attribute
@@ -58,450 +55,234 @@
 #   endif
 #endif
 
-#ifndef __evio_inline
-#   if __evio_has_attribute(__always_inline__)
-#       define __evio_inline inline __attribute__((__always_inline__))
+#ifndef __evio_returns_nonnull
+#   if __evio_has_attribute(__returns_nonnull__)
+#       define __evio_returns_nonnull __attribute__((__returns_nonnull__))
 #   else
-#       define __evio_inline inline
+#       define __evio_returns_nonnull
 #   endif
 #endif
 
-typedef void *(*evio_realloc_cb)(void *ctx, void *ptr, size_t size);
+#ifndef __evio_format_printf
+#   if __evio_has_attribute(__format__)
+#       define __evio_format_printf(f, a) __attribute__((__format__(printf, f, a)))
+#   else
+#       define __evio_format_printf(f, a)
+#   endif
+#endif
 
-__evio_public
-void evio_set_allocator(evio_realloc_cb cb, void *ctx);
+#ifndef __evio_noreturn
+#   if __evio_has_attribute(__noreturn__)
+#       define __evio_noreturn __attribute__((__noreturn__))
+#   else
+#       define __evio_noreturn
+#   endif
+#endif
 
+#ifndef __evio_has_builtin
+#   ifdef __has_builtin
+#       define __evio_has_builtin(x) __has_builtin(x)
+#   else
+#       define __evio_has_builtin(x) (0)
+#   endif
+#endif
+
+#ifndef __evio_likely
+#   if __evio_has_builtin(__builtin_expect)
+#       define __evio_likely(x) (__builtin_expect(!!(x), 1))
+#   else
+#       define __evio_likely(x) (x)
+#   endif
+#endif
+
+#ifndef __evio_unlikely
+#   if __evio_has_builtin(__builtin_expect)
+#       define __evio_unlikely(x) (__builtin_expect(!!(x), 0))
+#   else
+#       define __evio_unlikely(x) (x)
+#   endif
+#endif
+
+// IWYU pragma: begin_exports
+
+#include "evio_utils.h"
+#include "evio_alloc.h"
+
+// IWYU pragma: end_exports
+
+/** @brief A bitmask for watcher events (e.g., EVIO_READ, EVIO_TIMER). */
+typedef uint16_t evio_mask;
+
+/** @brief Event mask values for watchers. */
 enum {
-    EVIO_MASK       = 0xFFF,
-    EVIO_NONE       = 0x000,
-    EVIO_READ       = 0x001,
-    EVIO_WRITE      = 0x002,
-    EVIO_POLL       = 0x004,
-    EVIO_TIMER      = 0x008,
-    EVIO_SIGNAL     = 0x010,
-    EVIO_ASYNC      = 0x020,
-    EVIO_IDLE       = 0x040,
-    EVIO_PREPARE    = 0x080,
-    EVIO_CHECK      = 0x100,
-    EVIO_CLEANUP    = 0x200,
-    EVIO_WALK       = 0x400,
-    EVIO_ERROR      = 0x800,
+    EVIO_NONE       = 0x000, /**< No events. */
+    EVIO_READ       = 0x001, /**< Read readiness on a file descriptor. */
+    EVIO_WRITE      = 0x002, /**< Write readiness on a file descriptor. */
+    EVIO_POLL       = 0x004, /**< A poll event occurred (internal use). */
+    EVIO_TIMER      = 0x008, /**< A timer has expired. */
+    EVIO_SIGNAL     = 0x010, /**< A signal has been received. */
+    EVIO_ASYNC      = 0x020, /**< An async event has been sent. */
+    EVIO_IDLE       = 0x040, /**< The loop is idle. */
+    EVIO_PREPARE    = 0x080, /**< Prepare phase event. */
+    EVIO_CHECK      = 0x100, /**< Check phase event. */
+    EVIO_CLEANUP    = 0x200, /**< Cleanup phase event. */
+    EVIO_ONCE       = 0x400, /**< A one-shot poll or timer event occurred. */
+    EVIO_ERROR      = 0x800, /**< An error occurred. */
 };
 
+/** @brief Flags for `evio_loop_new` to customize loop creation. */
 enum {
-    EVIO_RUN_DEFAULT    = 0,
-    EVIO_RUN_NOWAIT     = 1,
-    EVIO_RUN_ONCE       = 2,
+    EVIO_FLAG_NONE  = 0x000, /**< Default flags. */
+    EVIO_FLAG_URING = 0x001, /**< Use io_uring to optimize `epoll_ctl` syscalls if available. */
 };
 
+/** @brief Flags for `evio_run` to control loop execution. */
 enum {
-    EVIO_BREAK_CANCEL   = 0,
-    EVIO_BREAK_ONE      = 1,
-    EVIO_BREAK_ALL      = 2,
+    EVIO_RUN_DEFAULT    = 0, /**< Run until stopped or no active watchers remain. */
+    EVIO_RUN_NOWAIT     = 1, /**< Run one iteration, but do not block for I/O. */
+    EVIO_RUN_ONCE       = 2, /**< Run one iteration and block for I/O if needed. */
 };
 
-typedef struct evio_loop    evio_loop;
-typedef struct evio_base    evio_base;
-typedef struct evio_list    evio_list;
-typedef struct evio_poll    evio_poll;
-typedef struct evio_timer   evio_timer;
-typedef struct evio_signal  evio_signal;
-typedef struct evio_async   evio_async;
-typedef struct evio_idle    evio_idle;
-typedef struct evio_prepare evio_prepare;
-typedef struct evio_check   evio_check;
-typedef struct evio_cleanup evio_cleanup;
+/** @brief Break states for `evio_break` to control loop termination. */
+enum {
+    EVIO_BREAK_CANCEL   = 0, /**< Cancel a previous break request. */
+    EVIO_BREAK_ONE      = 1, /**< Stop after the current loop iteration. */
+    EVIO_BREAK_ALL      = 2, /**< Stop the event loop entirely. */
+};
 
-typedef void (*evio_cb)(evio_loop *loop, evio_base *base, uint16_t emask);
+#ifndef EVIO_CACHELINE
+/** @brief Defines the cache line size for aligning atomic variables. */
+#define EVIO_CACHELINE 64
+#endif
 
+/**
+ * @brief Creates a cache-line aligned atomic variable to prevent false sharing.
+ * @param type The atomic type (e.g., int, bool).
+ */
+#define EVIO_ATOMIC(type) struct { \
+        alignas(EVIO_CACHELINE) _Atomic(type) value; /**< The atomic value. */ \
+        char _pad[EVIO_CACHELINE - sizeof(_Atomic(type))]; /**< Padding to prevent false sharing. */ \
+    }
+
+/** @brief Represents time in nanoseconds, stored as a 64-bit unsigned integer. */
+typedef uint64_t evio_time;
+
+/** @brief The maximum value for evio_time. */
+#define EVIO_TIME_MAX            UINT64_MAX
+/** @brief Creates an evio_time constant. */
+#define EVIO_TIME_C(c)           UINT64_C(c)
+/** @brief Casts a value to evio_time. */
+#define EVIO_TIME(t)             (evio_time)(t)
+
+/** @brief Nanoseconds per microsecond. */
+#define EVIO_TIME_PER_USEC       EVIO_TIME_C(1000)
+/** @brief Nanoseconds per millisecond. */
+#define EVIO_TIME_PER_MSEC       EVIO_TIME_C(1000000)
+/** @brief Nanoseconds per second. */
+#define EVIO_TIME_PER_SEC        EVIO_TIME_C(1000000000)
+
+/** @brief Converts microseconds to nanoseconds. */
+#define EVIO_TIME_FROM_USEC(t)   (EVIO_TIME(t) * EVIO_TIME_PER_USEC)
+/** @brief Converts milliseconds to nanoseconds. */
+#define EVIO_TIME_FROM_MSEC(t)   (EVIO_TIME(t) * EVIO_TIME_PER_MSEC)
+/** @brief Converts seconds to nanoseconds. */
+#define EVIO_TIME_FROM_SEC(t)    (EVIO_TIME(t) * EVIO_TIME_PER_SEC)
+
+/** @brief Converts nanoseconds to microseconds. */
+#define EVIO_TIME_TO_USEC(t)     (EVIO_TIME(t) / EVIO_TIME_PER_USEC)
+/** @brief Converts nanoseconds to milliseconds. */
+#define EVIO_TIME_TO_MSEC(t)     (EVIO_TIME(t) / EVIO_TIME_PER_MSEC)
+/** @brief Converts nanoseconds to seconds. */
+#define EVIO_TIME_TO_SEC(t)      (EVIO_TIME(t) / EVIO_TIME_PER_SEC)
+
+/** @brief Opaque type for the event loop. */
+typedef struct evio_loop evio_loop;
+/** @brief Opaque type for a watcher's base structure. */
+typedef struct evio_base evio_base;
+
+/**
+ * @brief A generic callback type for all watcher events.
+ * @param loop The event loop that triggered the event.
+ * @param base A pointer to the watcher's base structure.
+ * @param emask A bitmask of the events that occurred.
+ */
+typedef void (*evio_cb)(evio_loop *loop, evio_base *base, evio_mask emask);
+
+/**
+ * @brief Common fields for all watcher base structures.
+ * @details This macro defines the core members required by the event loop to
+ * manage a watcher. It should be included via the `EVIO_BASE` macro.
+ */
 #define EVIO_COMMON \
-    size_t active; \
-    size_t pending; \
-    void *data; \
-    evio_cb cb; \
+    size_t active;  /**< 1-based index if active, 0 otherwise. */ \
+    size_t pending; /**< 1-based index if pending, 0 otherwise. */ \
+    void *data;     /**< User-assignable data pointer. */ \
+    evio_cb cb;     /**< Watcher's callback function. */
 
+/**
+ * @brief Defines the base structure for all watcher types.
+ * @details This macro should be the first member of any watcher struct. It uses
+ * a union to allow polymorphic access via an `evio_base*` pointer.
+ */
 #define EVIO_BASE \
     union { \
-        evio_base base; \
+        struct evio_base base; /**< Allows casting to the base struct type. */ \
         struct { \
             EVIO_COMMON \
         }; \
     }
 
-#define EVIO_LIST \
-    union { \
-        evio_base base; \
-        evio_list list; \
-        struct { \
-            EVIO_COMMON \
-            evio_list *next; \
-        }; \
-    }
-
+/**
+ * @brief A lightweight base structure embedded in every watcher type.
+ *
+ * The event loop treats all concrete watcher kinds polymorphically through an
+ * `evio_base *`. The `active` and `pending` fields are one-based indices used
+ * internally to manage watcher lists and the pending-event queue. `data` is a
+ * user-assignable pointer, and `cb` stores the callback that the loop invokes
+ * when the watcher is triggered.
+ */
 struct evio_base {
     EVIO_COMMON
 };
 
-struct evio_list {
-    EVIO_BASE;
-    evio_list *next;
-};
-
-// Create a new event loop.
-__evio_public __evio_nodiscard
-evio_loop *evio_loop_new(int maxevents);
-
-// Destroy an event loop.
-__evio_public __evio_nonnull(1)
-void evio_loop_free(evio_loop *loop);
-
-// Reinitialize the event loop state after the fork.
-__evio_public __evio_nonnull(1)
-void evio_loop_fork(evio_loop *loop);
-
-// Get the monotonic time (in milliseconds) from the event loop.
-__evio_public __evio_nonnull(1) __evio_nodiscard
-uint64_t evio_time(evio_loop *loop);
-
-// Update the monotonic time in the event loop.
-__evio_public __evio_nonnull(1)
-void evio_update_time(evio_loop *loop);
-
-// Add a reference count to the event loop.
-__evio_public __evio_nonnull(1)
-void evio_ref(evio_loop *loop);
-
-// Remove a reference count from the event loop.
-__evio_public __evio_nonnull(1)
-void evio_unref(evio_loop *loop);
-
-// Get the current reference count from the event loop.
-__evio_public __evio_nonnull(1) __evio_nodiscard
-size_t evio_refcount(evio_loop *loop);
-
-// Associate arbitrary user data with an event loop.
-__evio_public __evio_nonnull(1)
-void evio_set_userdata(evio_loop *loop, void *data);
-
-// Retrieve arbitrary user data from the event loop.
-__evio_public __evio_nonnull(1) __evio_nodiscard
-void *evio_get_userdata(evio_loop *loop);
-
-// Start handling events in a loop.
-__evio_public __evio_nonnull(1)
-int evio_run(evio_loop *loop, uint8_t flags);
-
-// Stop handling events in a loop.
-__evio_public __evio_nonnull(1)
-void evio_break(evio_loop *loop, uint8_t state);
-
-// Walk through event loop watchers.
-__evio_public __evio_nonnull(1, 2)
-void evio_walk(evio_loop *loop, evio_cb cb, uint16_t emask);
-
-// Send an event to the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_feed_event(evio_loop *loop, evio_base *base, uint16_t emask);
-
-// Send a file descriptor event to the event loop.
-__evio_public __evio_nonnull(1)
-void evio_feed_fd_event(evio_loop *loop, int fd, uint8_t emask);
-
-// Send a file descriptor error to the event loop.
-__evio_public __evio_nonnull(1)
-void evio_feed_fd_error(evio_loop *loop, int fd);
-
-// Send a global signal event.
-__evio_public
-void evio_feed_signal(int signum);
-
-// Send a signal event to the event loop.
-__evio_public __evio_nonnull(1)
-void evio_feed_signal_event(evio_loop *loop, int signum);
-
-// Send a signal error to the event loop.
-__evio_public __evio_nonnull(1)
-void evio_feed_signal_error(evio_loop *loop, int signum);
-
-// Invoke pending event handlers in an event loop.
-__evio_public __evio_nonnull(1)
-void evio_invoke_pending(evio_loop *loop);
-
-// Clear the pending event status in an event loop watcher.
-__evio_public __evio_nonnull(1, 2)
-void evio_clear_pending(evio_loop *loop, evio_base *base);
-
-// Get the current pending event count from the event loop.
-__evio_public __evio_nonnull(1) __evio_nodiscard
-size_t evio_pending_count(evio_loop *loop);
-
-// Initialize a base watcher.
-static __evio_inline __evio_nonnull(1, 2)
+/**
+ * @brief Initializes the base properties of a watcher.
+ * @param base The watcher base to initialize.
+ * @param cb The callback function to be invoked for this watcher.
+ */
+static inline __evio_nonnull(1, 2)
 void evio_init(evio_base *base, evio_cb cb)
 {
+    EVIO_ASSERT(cb);
     base->active = 0;
     base->pending = 0;
     base->cb = cb;
 }
 
-// ####################################################################
-// EVIO_POLL
-// ####################################################################
-
-struct evio_poll {
-    EVIO_LIST;
-    int fd;
-    uint8_t emask;
-};
-
-// Modify the poll watcher events mask.
-static __evio_inline __evio_nonnull(1)
-void evio_poll_modify(evio_poll *w, uint8_t emask)
+/**
+ * @brief Invokes a watcher's callback with the given event mask.
+ * @param loop The event loop.
+ * @param base The watcher whose callback should be invoked.
+ * @param emask The event mask to pass to the callback.
+ */
+static inline __evio_nonnull(1, 2)
+void evio_invoke(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    w->emask = (emask & (EVIO_READ | EVIO_WRITE)) | (w->emask & EVIO_POLL);
+    EVIO_ASSERT(base->cb);
+    base->cb(loop, base, emask);
 }
 
-// Modify the poll watcher file descriptor and events mask.
-static __evio_inline __evio_nonnull(1)
-void evio_poll_set(evio_poll *w, int fd, uint8_t emask)
-{
-    w->fd = fd;
-    w->emask = (emask & (EVIO_READ | EVIO_WRITE)) | EVIO_POLL;
-}
+// IWYU pragma: begin_exports
 
-// Initialize a poll watcher with a file descriptor and an events mask.
-static __evio_inline __evio_nonnull(1, 2)
-void evio_poll_init(evio_poll *w, evio_cb cb, int fd, uint8_t emask)
-{
-    evio_init(&w->base, cb);
-    evio_poll_set(w, fd, emask);
-}
+#include "evio_loop.h"
+#include "evio_poll.h"
+#include "evio_timer.h"
+#include "evio_signal.h"
+#include "evio_async.h"
+#include "evio_idle.h"
+#include "evio_prepare.h"
+#include "evio_check.h"
+#include "evio_cleanup.h"
+#include "evio_once.h"
 
-// Add poll watcher to the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_poll_start(evio_loop *loop, evio_poll *w);
-
-// Remove poll watcher from the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_poll_stop(evio_loop *loop, evio_poll *w);
-
-// ####################################################################
-// EVIO_TIMER
-// ####################################################################
-
-struct evio_timer {
-    EVIO_BASE;
-    uint64_t time;
-    uint64_t repeat;
-};
-
-// Modify timer watcher timeout and period (in milliseconds).
-static __evio_inline __evio_nonnull(1)
-void evio_timer_set(evio_timer *w, uint64_t after, uint64_t repeat)
-{
-    w->time = after;
-    w->repeat = repeat;
-}
-
-// Initialize a timer watcher with a timeout and period (in milliseconds).
-static __evio_inline __evio_nonnull(1, 2)
-void evio_timer_init(evio_timer *w, evio_cb cb, uint64_t after, uint64_t repeat)
-{
-    evio_init(&w->base, cb);
-    evio_timer_set(w, after, repeat);
-}
-
-// Add timer watcher to the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_timer_start(evio_loop *loop, evio_timer *w);
-
-// Remove timer watcher from the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_timer_stop(evio_loop *loop, evio_timer *w);
-
-// Restart a repeating timer watcher.
-__evio_public __evio_nonnull(1, 2)
-void evio_timer_again(evio_loop *loop, evio_timer *w);
-
-// Get the current timeout (in milliseconds) from the timer watcher.
-__evio_public __evio_nonnull(1, 2) __evio_nodiscard
-uint64_t evio_timer_remaining(evio_loop *loop, evio_timer *w);
-
-// ####################################################################
-// EVIO_SIGNAL
-// ####################################################################
-
-struct evio_signal {
-    EVIO_LIST;
-    int signum;
-};
-
-// Modify a signal watcher signal number.
-static __evio_inline __evio_nonnull(1)
-void evio_signal_set(evio_signal *w, int signum)
-{
-    w->signum = signum;
-}
-
-// Initialize a signal watcher with a signal number.
-static __evio_inline __evio_nonnull(1, 2)
-void evio_signal_init(evio_signal *w, evio_cb cb, int signum)
-{
-    evio_init(&w->base, cb);
-    evio_signal_set(w, signum);
-}
-
-// Add signal watcher to the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_signal_start(evio_loop *loop, evio_signal *w);
-
-// Remove signal watcher from the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_signal_stop(evio_loop *loop, evio_signal *w);
-
-// ####################################################################
-// EVIO_ASYNC
-// ####################################################################
-
-struct evio_async {
-    EVIO_BASE;
-    _Atomic uint8_t status;
-};
-
-// Get the current pending event status from the async watcher.
-static __evio_inline __evio_nonnull(1) __evio_nodiscard
-int evio_async_pending(evio_async *w)
-{
-    return atomic_load_explicit(&w->status, memory_order_acquire);
-}
-
-// Initialize an async watcher.
-static __evio_inline __evio_nonnull(1, 2)
-void evio_async_init(evio_async *w, evio_cb cb)
-{
-    evio_init(&w->base, cb);
-    atomic_init(&w->status, 0);
-}
-
-// Add async watcher to the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_async_start(evio_loop *loop, evio_async *w);
-
-// Remove async watcher from the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_async_stop(evio_loop *loop, evio_async *w);
-
-// Signal an async event to event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_async_send(evio_loop *loop, evio_async *w);
-
-// ####################################################################
-// EVIO_IDLE
-// ####################################################################
-
-struct evio_idle {
-    EVIO_BASE;
-};
-
-// Initialize an idle watcher.
-static __evio_inline __evio_nonnull(1, 2)
-void evio_idle_init(evio_idle *w, evio_cb cb)
-{
-    evio_init(&w->base, cb);
-}
-
-// Add idle watcher to the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_idle_start(evio_loop *loop, evio_idle *w);
-
-// Remove idle watcher from the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_idle_stop(evio_loop *loop, evio_idle *w);
-
-// ####################################################################
-// EVIO_PREPARE
-// ####################################################################
-
-struct evio_prepare {
-    EVIO_BASE;
-};
-
-// Initialize a prepare watcher.
-static __evio_inline __evio_nonnull(1, 2)
-void evio_prepare_init(evio_prepare *w, evio_cb cb)
-{
-    evio_init(&w->base, cb);
-}
-
-// Add prepare watcher to the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_prepare_start(evio_loop *loop, evio_prepare *w);
-
-// Remove prepare watcher from the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_prepare_stop(evio_loop *loop, evio_prepare *w);
-
-// ####################################################################
-// EVIO_CHECK
-// ####################################################################
-
-struct evio_check {
-    EVIO_BASE;
-};
-
-// Initialize a check watcher.
-static __evio_inline __evio_nonnull(1, 2)
-void evio_check_init(evio_check *w, evio_cb cb)
-{
-    evio_init(&w->base, cb);
-}
-
-// Add check watcher to the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_check_start(evio_loop *loop, evio_check *w);
-
-// Remove check watcher from the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_check_stop(evio_loop *loop, evio_check *w);
-
-// ####################################################################
-// EVIO_CLEANUP
-// ####################################################################
-
-struct evio_cleanup {
-    EVIO_BASE;
-};
-
-// Initialize a cleanup watcher.
-static __evio_inline __evio_nonnull(1, 2)
-void evio_cleanup_init(evio_cleanup *w, evio_cb cb)
-{
-    evio_init(&w->base, cb);
-}
-
-// Add cleanup watcher to the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_cleanup_start(evio_loop *loop, evio_cleanup *w);
-
-// Remove cleanup watcher from the event loop.
-__evio_public __evio_nonnull(1, 2)
-void evio_cleanup_stop(evio_loop *loop, evio_cleanup *w);
-
-// ####################################################################
-
-typedef union evio_watcher {
-    evio_base base;
-    evio_list list;
-    evio_poll poll;
-    evio_timer timer;
-    evio_signal signal;
-    evio_async async;
-    evio_idle idle;
-    evio_prepare prepare;
-    evio_check check;
-    evio_cleanup cleanup;
-} evio_watcher;
-
-#undef EVIO_COMMON
-#undef EVIO_BASE
-#undef EVIO_LIST
+// IWYU pragma: end_exports

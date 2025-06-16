@@ -1,6 +1,7 @@
 project('evio', 'c',
-    version: '0.1.0',
+    version: '0.9.0',
     license: 'MIT',
+    meson_version: '>=0.56.0',
     default_options: [
         'buildtype=debugoptimized',
         'default_library=static',
@@ -10,14 +11,7 @@ project('evio', 'c',
     ]
 )
 
-project_version = meson.project_version()
-project_version_split = project_version.split('.')
-project_version_major = project_version_split[0]
-project_version_minor = project_version_split[1]
-project_version_patch = project_version_split[2]
-
-project_source_root = meson.current_source_dir()
-project_build_root = meson.current_build_dir()
+current_source_dir = meson.current_source_dir()
 
 cc = meson.get_compiler('c')
 
@@ -31,17 +25,15 @@ cflags = [
 
 cflags_check = [
     '-pipe',
-    '-funwind-tables',
     '-fno-common',
     '-Wfatal-errors',
     '-Wundef',
     '-pedantic',
     '-pedantic-errors',
     '-Wstrict-prototypes',
+    '-Wmissing-braces',
     '-Wmissing-prototypes',
     '-Wmissing-declarations',
-    '-Wno-missing-field-initializers',
-    '-Wno-unused-parameter',
     '-Wduplicated-branches',
     '-Wduplicated-cond',
     '-Wimplicit-fallthrough',
@@ -52,33 +44,35 @@ cflags_check = [
     '-Wshadow',
     '-Wvla',
     '-Walloca',
-    '-Wc++-compat',
     '-Wformat=2',
-    '-Wformat-overflow=2',
-    '-Wformat-truncation=2',
-    '-Wformat-signedness',
-    '-Wno-format-pedantic',
-    '-Wno-format-nonliteral',
+    '-Wwrite-strings',
+    '-Wstrict-overflow=4',
+    '-Wno-missing-field-initializers',
+    '-Wno-strict-aliasing',
     '-Wno-clobbered',
 ]
 
 if cc.get_id() == 'clang'
     cflags_check += [
         '-Wno-gnu',
+        '-Wno-language-extension-token',
         '-Wno-builtin-requires-header',
-        '-Wno-missing-braces',
+        '-Wno-format-pedantic',
     ]
 endif
 
-if cc.get_id() == 'gcc' and get_option('analyzer')
-    cflags_check += '-fanalyzer'
-    cflags_check += [
-        '-Wno-analyzer-malloc-leak',
-        '-Wno-analyzer-fd-leak',
-    ]
-
-    if cc.version().version_compare('<12')
-        cflags_check += '-Wno-analyzer-mismatching-deallocation'
+if get_option('analyzer')
+    if cc.get_id() == 'gcc'
+        cflags_check += '-fanalyzer'
+        cflags_check += [
+            '-Wno-analyzer-malloc-leak',
+            '-Wno-analyzer-fd-leak',
+        ]
+        if cc.version().version_compare('<12')
+            cflags_check += '-Wno-analyzer-mismatching-deallocation'
+        endif
+    else
+        warning('GCC analyzer requested, but compiler is not GCC. Ignoring.')
     endif
 endif
 
@@ -88,18 +82,87 @@ add_project_arguments(
     language: 'c'
 )
 
-libevio_version = project_version_major + '.' + project_version_minor + '.0'
+sources = files(
+    'src/evio_utils.c',
+    'src/evio_alloc.c',
+    'src/evio_core.c',
+    'src/evio_heap.c',
+    'src/evio_list.c',
+    'src/evio_loop.c',
+    'src/evio_poll.c',
+    'src/evio_timer.c',
+    'src/evio_signal.c',
+    'src/evio_async.c',
+    'src/evio_idle.c',
+    'src/evio_prepare.c',
+    'src/evio_check.c',
+    'src/evio_cleanup.c',
+    'src/evio_once.c',
+    'src/evio_eventfd.c',
+)
 
-libevio = library('evio', 'src/evio.c',
+if cc.has_header('linux/io_uring.h')
+    sources += 'src/evio_uring.c'
+    add_project_arguments('-DEVIO_IO_URING', language: 'c')
+endif
+
+headers = files(
+    'src/evio.h',
+    'src/evio_utils.h',
+    'src/evio_alloc.h',
+    'src/evio_loop.h',
+    'src/evio_poll.h',
+    'src/evio_timer.h',
+    'src/evio_signal.h',
+    'src/evio_async.h',
+    'src/evio_idle.h',
+    'src/evio_prepare.h',
+    'src/evio_check.h',
+    'src/evio_cleanup.h',
+    'src/evio_once.h',
+)
+
+libevio_version_arr = meson.project_version().split('.')
+libevio_version = '@0@.@1@.0'.format(libevio_version_arr[0], libevio_version_arr[1])
+
+libevio = library('evio', sources,
     version: libevio_version,
     gnu_symbol_visibility: 'hidden',
     install: true
 )
 
-install_headers('src/evio.h')
+install_headers(headers, subdir: 'evio')
 
 pkg = import('pkgconfig')
-pkg.generate(libevio, version: libevio_version, description: 'Simple epoll event loop')
+pkg.generate(libevio,
+    name: 'evio',
+    version: libevio_version,
+    description: 'epoll event loop library'
+)
+
+if get_option('tests')
+    evio_test = executable('evio_test', files('src/evio.c'),
+        link_with: libevio,
+        dependencies: dependency('threads', required: true),
+        install: false,
+    )
+
+    if get_option('valgrind')
+        valgrind = find_program('valgrind', required: true)
+        valgrind_args = [
+            '--tool=memcheck',
+            '--leak-check=full',
+            '--show-leak-kinds=all',
+            '--show-reachable=no',
+            '--track-origins=yes',
+            '--trace-children=yes',
+            '--error-exitcode=1',
+        ]
+        test('evio_test (valgrind)', valgrind, args: valgrind_args + [evio_test])
+    else
+        test('evio_test', evio_test)
+    endif
+endif
 
 astyle = find_program('astyle', required: false)
 if astyle.found()
@@ -107,11 +170,12 @@ if astyle.found()
         output: 'astyle',
         command: [
             astyle,
-            '--options=@0@/.astylerc'.format(project_source_root),
+            '--options=@0@/.astylerc'.format(current_source_dir),
             '-Q', '-n', '-r',
-            project_source_root / 'src/*.c',
-            project_source_root / 'src/*.h',
+            current_source_dir / 'src/*.c',
+            current_source_dir / 'src/*.h',
         ],
         console: true,
+        build_by_default: false
     )
 endif

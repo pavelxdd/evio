@@ -9,37 +9,6 @@ on:
       - '**.md'
 
 jobs:
-  ubuntu-20:
-    runs-on: ubuntu-20.04
-    strategy:
-      fail-fast: false
-      matrix:
-        buildtype:
-          - plain
-          - debug
-          - debugoptimized
-          - release
-          - minsize
-        cc:
-          - gcc
-          - gcc-7
-          - gcc-8
-          - gcc-9
-          - gcc-10
-          - clang
-          - clang-7
-          - clang-8
-          - clang-9
-          - clang-10
-    env:
-      CC: ${{ matrix.cc }}
-    steps:
-    - uses: actions/checkout@main
-    - run: sudo apt-get update
-    - run: sudo apt-get install -yqq --no-install-recommends meson ninja-build ${{ matrix.cc }}
-    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }}
-    - run: ninja -Cbuild -v
-
   ubuntu-22:
     runs-on: ubuntu-22.04
     strategy:
@@ -69,11 +38,47 @@ jobs:
     - uses: actions/checkout@main
     - run: sudo apt-get update
     - run: sudo apt-get install -yqq --no-install-recommends meson ${{ matrix.cc }}
-    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }}
+    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }} -Dtests=true
     - run: meson compile -Cbuild -v
+    - run: meson test -Cbuild -v
+
+  ubuntu-24:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        buildtype:
+          - plain
+          - debug
+          - debugoptimized
+          - release
+          - minsize
+        cc:
+          - gcc
+          - gcc-9
+          - gcc-10
+          - gcc-11
+          - gcc-12
+          - gcc-13
+          - gcc-14
+          - clang
+          - clang-14
+          - clang-15
+          - clang-16
+          - clang-17
+          - clang-18
+    env:
+      CC: ${{ matrix.cc }}
+    steps:
+    - uses: actions/checkout@main
+    - run: sudo apt-get update
+    - run: sudo apt-get install -yqq --no-install-recommends meson ${{ matrix.cc }}
+    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }} -Dtests=true
+    - run: meson compile -Cbuild -v
+    - run: meson test -Cbuild -v
 
   debian-sid:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     container:
       image: debian:sid
     strategy:
@@ -89,19 +94,23 @@ jobs:
           - gcc
           - gcc-12
           - gcc-13
+          - gcc-14
           - clang
-          - clang-16
           - clang-17
+          - clang-18
+          - clang-19
+          - clang-20
     env:
       CC: ${{ matrix.cc }}
     steps:
     - uses: actions/checkout@main
     - run: apt-get update && apt-get install -yqq --no-install-recommends ca-certificates gpg curl
     - run: curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --no-tty --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg
-    - run: echo "deb http://apt.llvm.org/unstable/ llvm-toolchain-17 main" >> /etc/apt/sources.list.d/llvm.list
+    - run: echo "deb http://apt.llvm.org/unstable/ llvm-toolchain-20 main" >> /etc/apt/sources.list.d/llvm.list
     - run: apt-get update && apt-get install -yqq --no-install-recommends build-essential meson ${{ matrix.cc }}
-    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }}
+    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }} -Dtests=true
     - run: meson compile -Cbuild -v
+    - run: meson test -Cbuild -v
 
   alpine:
     runs-on: ubuntu-latest
@@ -127,8 +136,19 @@ jobs:
     steps:
     - uses: actions/checkout@main
     - run: apk --no-cache add build-base meson ${{ matrix.cc }}
-    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }}
+    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }} -Dtests=true
     - run: meson compile -Cbuild -v
+    - run: meson test -Cbuild -v
+
+  valgrind:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@main
+    - run: sudo apt-get update
+    - run: sudo apt-get install -yqq --no-install-recommends meson valgrind
+    - run: meson setup build -Dbuildtype=debug -Dtests=true  -Dvalgrind=true
+    - run: meson compile -Cbuild -v
+    - run: meson test -Cbuild -v
 
   analyzer:
     runs-on: ubuntu-latest
@@ -136,5 +156,21 @@ jobs:
     - uses: actions/checkout@main
     - run: sudo apt-get update
     - run: sudo apt-get install -yqq --no-install-recommends meson
-    - run: meson setup build -Dbuildtype=debug -Danalyzer=true
+    - run: meson setup build -Dbuildtype=debug -Danalyzer=true -Dtests=true
     - run: meson compile -Cbuild -v
+    - run: meson test -Cbuild -v
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@main
+    - run: sudo apt-get update
+    - run: sudo apt-get install -yqq --no-install-recommends build-essential meson gcovr git curl gnupg
+    - run: meson setup build -Dbuildtype=debug -Dtests=true -Db_coverage=true
+    - run: meson compile -Cbuild -v
+    - run: meson test -Cbuild -v
+    - run: ninja -Cbuild -v coverage
+    - uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        slug: pavelxdd/evio
