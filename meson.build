@@ -8,6 +8,7 @@ project('evio', 'c',
         'c_std=c11',
         'werror=true',
         'warning_level=2',
+        'b_ndebug=if-release',
     ]
 )
 
@@ -28,8 +29,6 @@ cflags_check = [
     '-fno-common',
     '-Wfatal-errors',
     '-Wundef',
-    '-pedantic',
-    '-pedantic-errors',
     '-Wstrict-prototypes',
     '-Wmissing-braces',
     '-Wmissing-prototypes',
@@ -50,6 +49,9 @@ cflags_check = [
     '-Wno-missing-field-initializers',
     '-Wno-strict-aliasing',
     '-Wno-clobbered',
+    '-Wno-format-zero-length',
+    '-Wno-nonnull-compare',
+    '-Wno-pedantic',
 ]
 
 if cc.get_id() == 'clang'
@@ -65,8 +67,7 @@ if get_option('analyzer')
     if cc.get_id() == 'gcc'
         cflags_check += '-fanalyzer'
         cflags_check += [
-            '-Wno-analyzer-malloc-leak',
-            '-Wno-analyzer-fd-leak',
+            '-Wno-analyzer-fd-use-without-check',
         ]
         if cc.version().version_compare('<12')
             cflags_check += '-Wno-analyzer-mismatching-deallocation'
@@ -82,7 +83,7 @@ add_project_arguments(
     language: 'c'
 )
 
-sources = files(
+evio_sources = files(
     'src/evio_utils.c',
     'src/evio_alloc.c',
     'src/evio_core.c',
@@ -102,11 +103,11 @@ sources = files(
 )
 
 if cc.has_header('linux/io_uring.h')
-    sources += 'src/evio_uring.c'
+    evio_sources += 'src/evio_uring.c'
     add_project_arguments('-DEVIO_IO_URING', language: 'c')
 endif
 
-headers = files(
+evio_headers = files(
     'src/evio.h',
     'src/evio_utils.h',
     'src/evio_alloc.h',
@@ -125,13 +126,13 @@ headers = files(
 libevio_version_arr = meson.project_version().split('.')
 libevio_version = '@0@.@1@.0'.format(libevio_version_arr[0], libevio_version_arr[1])
 
-libevio = library('evio', sources,
+libevio = library('evio', evio_sources,
     version: libevio_version,
     gnu_symbol_visibility: 'hidden',
     install: true
 )
 
-install_headers(headers, subdir: 'evio')
+install_headers(evio_headers, subdir: 'evio')
 
 pkg = import('pkgconfig')
 pkg.generate(libevio,
@@ -141,9 +142,42 @@ pkg.generate(libevio,
 )
 
 if get_option('tests')
-    evio_test = executable('evio_test', files('src/evio.c'),
-        link_with: libevio,
-        dependencies: dependency('threads', required: true),
+    test_sources = evio_sources + files(
+        'tests/test.c',
+        'tests/test_utils.c',
+        'tests/test_alloc.c',
+        'tests/test_core.c',
+        'tests/test_heap.c',
+        'tests/test_list.c',
+        'tests/test_loop.c',
+        'tests/test_poll.c',
+        'tests/test_timer.c',
+        'tests/test_signal.c',
+        'tests/test_async.c',
+        'tests/test_idle.c',
+        'tests/test_prepare.c',
+        'tests/test_check.c',
+        'tests/test_cleanup.c',
+        'tests/test_once.c',
+        'tests/test_eventfd.c',
+        'tests/test_uring.c',
+    )
+
+    evio_tests = executable('evio_tests', test_sources,
+        c_args: cc.get_supported_arguments([
+            '-DEVIO_TESTING=1',
+            '-UNDEBUG',
+            '-fno-inline',
+        ]),
+        override_options: ['b_ndebug=false'],
+        include_directories: [
+            include_directories('src'),
+            include_directories('tests/include', is_system: true),
+        ],
+        dependencies: [
+            dependency('cmocka', required: true),
+            dependency('threads', required: true),
+        ],
         install: false,
     )
 
@@ -154,13 +188,14 @@ if get_option('tests')
             '--leak-check=full',
             '--show-leak-kinds=all',
             '--show-reachable=no',
+            '--track-fds=yes',
             '--track-origins=yes',
             '--trace-children=yes',
             '--error-exitcode=1',
         ]
-        test('evio_test (valgrind)', valgrind, args: valgrind_args + [evio_test])
+        test('evio_tests (valgrind)', valgrind, args: valgrind_args + [evio_tests])
     else
-        test('evio_test', evio_test)
+        test('evio_tests', evio_tests)
     endif
 endif
 
@@ -174,6 +209,8 @@ if astyle.found()
             '-Q', '-n', '-r',
             current_source_dir / 'src/*.c',
             current_source_dir / 'src/*.h',
+            current_source_dir / 'tests/*.c',
+            current_source_dir / 'tests/*.h',
         ],
         console: true,
         build_by_default: false

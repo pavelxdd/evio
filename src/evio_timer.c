@@ -83,19 +83,27 @@ void evio_timer_update(evio_loop *loop)
         loop->timer.ptr[0].time <= loop->time
     ) {
         evio_node *node = &loop->timer.ptr[0];
-        evio_base *base = node->base;
-        evio_timer *w = (evio_timer *)base;
+        evio_timer *w = (evio_timer *)node->base;
+
+        evio_queue_event(loop, &w->base, EVIO_TIMER);
 
         if (!w->repeat || __evio_unlikely(node->time >= EVIO_TIME_MAX - w->repeat)) {
-            evio_timer_stop(loop, w);
+            // One-shot timer: remove from heap WITHOUT clearing pending event.
+            size_t count = --loop->timer.count;
+            evio_unref(loop);
+            w->active = 0;
+
+            if (count) {
+                loop->timer.ptr[0] = loop->timer.ptr[count];
+                evio_heap_down(loop->timer.ptr, 0, count);
+            }
         } else {
+            // Repeating timer: reschedule.
             node->time += w->repeat;
             if (node->time <= loop->time) {
                 node->time = loop->time + 1;
             }
             evio_heap_down(loop->timer.ptr, 0, loop->timer.count);
         }
-
-        evio_queue_event(loop, &w->base, EVIO_TIMER);
     }
 }

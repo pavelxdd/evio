@@ -6,16 +6,28 @@
 void evio_queue_event(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     if (__evio_unlikely(base->pending)) {
-        evio_pending *p = &loop->pending.ptr[base->pending - 1];
+        const size_t queue = (base->pending - 1) & 1;
+        const size_t index = (base->pending - 1) >> 1;
+
+        evio_pending_list *pending = &loop->pending[queue];
+        EVIO_ASSERT(pending->count > index);
+        EVIO_ASSERT(pending->ptr[index].base == base);
+
+        evio_pending *p = &pending->ptr[index];
         p->emask |= emask;
         return;
     }
 
-    base->pending = ++loop->pending.count;
-    loop->pending.ptr = evio_list_resize(loop->pending.ptr, sizeof(evio_pending),
-                                         loop->pending.count, &loop->pending.total);
+    const size_t queue = loop->pending_queue;
+    evio_pending_list *pending = &loop->pending[queue];
 
-    evio_pending *p = &loop->pending.ptr[base->pending - 1];
+    const size_t index = pending->count++;
+    base->pending = (index << 1) + 1 + queue;
+
+    pending->ptr = evio_list_resize(pending->ptr, sizeof(evio_pending),
+                                    pending->count, &pending->total);
+
+    evio_pending *p = &pending->ptr[index];
     p->base = base;
     p->emask = emask;
 }
@@ -30,6 +42,7 @@ void evio_queue_events(evio_loop *loop, evio_base **base, size_t count, evio_mas
 void evio_queue_fd_events(evio_loop *loop, int fd, evio_mask emask)
 {
     EVIO_ASSERT(fd >= 0 && (size_t)fd < loop->fds.count);
+
     evio_fds *fds = &loop->fds.ptr[fd];
 
     for (size_t i = fds->list.count; i--;) {
@@ -43,6 +56,7 @@ void evio_queue_fd_events(evio_loop *loop, int fd, evio_mask emask)
 void evio_queue_fd_errors(evio_loop *loop, int fd)
 {
     EVIO_ASSERT(fd >= 0 && (size_t)fd < loop->fds.count);
+
     evio_fds *fds = &loop->fds.ptr[fd];
 
     for (size_t i = fds->list.count; i--;) {
@@ -55,6 +69,7 @@ void evio_queue_fd_errors(evio_loop *loop, int fd)
 void evio_queue_fd_error(evio_loop *loop, int fd)
 {
     EVIO_ASSERT(fd >= 0 && (size_t)fd < loop->fds.count);
+
     evio_fds *fds = &loop->fds.ptr[fd];
 
     if (!fds->errors) {
@@ -65,9 +80,10 @@ void evio_queue_fd_error(evio_loop *loop, int fd)
     }
 }
 
-void evio_queue_fd_change(evio_loop *loop, int fd, uint8_t flags)
+void evio_queue_fd_change(evio_loop *loop, int fd, evio_flag flags)
 {
     EVIO_ASSERT(fd >= 0 && (size_t)fd < loop->fds.count);
+
     evio_fds *fds = &loop->fds.ptr[fd];
 
     if (__evio_likely(!fds->changes)) {
@@ -85,43 +101,46 @@ void evio_flush_fd_change(evio_loop *loop, int idx)
 {
     EVIO_ASSERT(idx >= 0 && (size_t)idx < loop->fdchanges.count);
 
-    if (loop->fdchanges.count-- <= 1) {
+    if (loop->fdchanges.count < 2) {
         loop->fdchanges.count = 0;
         return;
     }
 
-    int fd = loop->fdchanges.ptr[loop->fdchanges.count];
+    int fd = loop->fdchanges.ptr[loop->fdchanges.count - 1];
     EVIO_ASSERT(fd >= 0 && (size_t)fd < loop->fds.count);
 
     evio_fds *fds = &loop->fds.ptr[fd];
-    EVIO_ASSERT(fds->changes == loop->fdchanges.count + 1);
+    EVIO_ASSERT(fds->changes == loop->fdchanges.count);
 
     fds->changes = idx + 1;
     loop->fdchanges.ptr[idx] = fd;
+    loop->fdchanges.count--;
 }
 
 void evio_flush_fd_error(evio_loop *loop, int idx)
 {
     EVIO_ASSERT(idx >= 0 && (size_t)idx < loop->fderrors.count);
 
-    if (loop->fderrors.count-- <= 1) {
+    if (loop->fderrors.count < 2) {
         loop->fderrors.count = 0;
         return;
     }
 
-    int fd = loop->fderrors.ptr[loop->fderrors.count];
+    int fd = loop->fderrors.ptr[loop->fderrors.count - 1];
     EVIO_ASSERT(fd >= 0 && (size_t)fd < loop->fds.count);
 
     evio_fds *fds = &loop->fds.ptr[fd];
-    EVIO_ASSERT(fds->errors == loop->fderrors.count + 1);
+    EVIO_ASSERT(fds->errors == loop->fderrors.count);
 
     fds->errors = idx + 1;
     loop->fderrors.ptr[idx] = fd;
+    loop->fderrors.count--;
 }
 
 int evio_invalidate_fd(evio_loop *loop, int fd)
 {
     EVIO_ASSERT(fd >= 0 && (size_t)fd < loop->fds.count);
+
     evio_fds *fds = &loop->fds.ptr[fd];
 
     if (fds->list.count) {
@@ -143,7 +162,6 @@ int evio_invalidate_fd(evio_loop *loop, int fd)
     }
 
     fds->emask = 0;
-    fds->cache = 0;
     fds->flags = EVIO_FD_INVAL;
 
     if (__evio_likely(!epoll_ctl(loop->fd, EPOLL_CTL_DEL, fd, NULL))) {
@@ -164,25 +182,53 @@ void evio_feed_signal(evio_loop *loop, int signum)
 
 void evio_invoke_pending(evio_loop *loop)
 {
-    while (loop->pending.count) {
-        evio_pending *p = &loop->pending.ptr[--loop->pending.count];
-        p->base->pending = 0;
-        p->base->cb(loop, p->base, p->emask);
+    for (;;) {
+        const size_t queue = loop->pending_queue;
+        evio_pending_list *pending = &loop->pending[queue];
+        if (!pending->count) {
+            break;
+        }
+
+        // Flip to the other queue.
+        // Any new events queued by callbacks will go here.
+        loop->pending_queue ^= 1;
+
+        while (pending->count) {
+            const size_t index = --pending->count;
+            evio_pending *p = &pending->ptr[index];
+
+            EVIO_ASSERT(p->base->pending == (index << 1) + 1 + queue);
+
+            p->base->pending = 0;
+            p->base->cb(loop, p->base, p->emask);
+        }
     }
 }
 
 void evio_clear_pending(evio_loop *loop, evio_base *base)
 {
-    if (__evio_unlikely(base->pending)) {
-        loop->pending.ptr[base->pending - 1] = loop->pending.ptr[--loop->pending.count];
-        loop->pending.ptr[base->pending - 1].base->pending = base->pending;
-        base->pending = 0;
+    if (__evio_likely(!base->pending)) {
+        return;
     }
+
+    const size_t queue = (base->pending - 1) & 1;
+    const size_t index = (base->pending - 1) >> 1;
+
+    evio_pending_list *pending = &loop->pending[queue];
+
+    EVIO_ASSERT(pending->count > index);
+    EVIO_ASSERT(pending->ptr[index].base == base);
+
+    pending->ptr[index] = pending->ptr[--pending->count];
+    pending->ptr[index].base->pending = base->pending;
+
+    base->pending = 0;
 }
 
 size_t evio_pending_count(const evio_loop *loop)
 {
-    return loop->pending.count;
+    return loop->pending[0].count +
+           loop->pending[1].count;
 }
 
 void evio_feed_event(evio_loop *loop, evio_base *base, evio_mask emask)

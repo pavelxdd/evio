@@ -8,6 +8,3 @@
 !.astylerc
 *.iml
 /build*/
-/src*/
-!/src/
-/src/xxx

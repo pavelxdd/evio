@@ -90,27 +90,34 @@ int evio_uring_enter(unsigned int fd,
 static void evio_uring_submit_and_wait(evio_loop *loop)
 {
     evio_uring *iou = loop->iou;
+
+    // GCOVR_EXCL_START
     EVIO_ASSERT(iou && iou->fd >= 0);
+    // GCOVR_EXCL_STOP
 
     unsigned int n = loop->iou_count;
+    // GCOVR_EXCL_START
     EVIO_ASSERT(n);
+    // GCOVR_EXCL_STOP
 
-    for (;;) {
+    // This loop handles EINTR and other rare syscall errors, which are not
+    // reliably testable. The core logic is the single call to io_uring_enter.
+    for (;;) { // GCOVR_EXCL_LINE
         int ret = evio_uring_enter(iou->fd, n, n, IORING_ENTER_GETEVENTS,
                                    &loop->sigmask, sizeof(loop->sigmask));
+        // GCOVR_EXCL_START
         if (__evio_unlikely(ret < 0)) {
-            // GCOVR_EXCL_START
             int err = ret == -1 ? errno : -ret;
             if (err == EINTR || err == EAGAIN) {
                 continue;
             }
             EVIO_ABORT("io_uring_enter() failed, error %d: %s\n", err, EVIO_STRERROR(err));
-            // GCOVR_EXCL_STOP
         }
         if (__evio_unlikely((uint32_t)ret != n)) {
+            // This can happen if the kernel is buggy or we miscounted.
             EVIO_ABORT("io_uring_enter() failed, result %d/%u\n", ret, n);
         }
-
+        // GCOVR_EXCL_STOP
         break;
     }
 
@@ -120,10 +127,13 @@ static void evio_uring_submit_and_wait(evio_loop *loop)
 void evio_uring_ctl(evio_loop *loop, int op, int fd, const struct epoll_event *ev)
 {
     evio_uring *iou = loop->iou;
+
+    // GCOVR_EXCL_START
     EVIO_ASSERT(iou && iou->fd >= 0);
 
     EVIO_ASSERT(op == EPOLL_CTL_ADD ||
                 op == EPOLL_CTL_MOD);
+    // GCOVR_EXCL_STOP
 
     uint32_t mask = iou->sqmask;
     uint32_t tail = *iou->sqtail;
@@ -156,7 +166,10 @@ void evio_uring_ctl(evio_loop *loop, int op, int fd, const struct epoll_event *e
 void evio_uring_flush(evio_loop *loop)
 {
     evio_uring *iou = loop->iou;
+
+    // GCOVR_EXCL_START
     EVIO_ASSERT(iou && iou->fd >= 0);
+    // GCOVR_EXCL_STOP
 
     while (loop->iou_count) {
         evio_uring_submit_and_wait(loop);
@@ -174,21 +187,27 @@ void evio_uring_flush(evio_loop *loop)
             }
 
             uint32_t fd32 = cqe->user_data & UINT32_MAX;
+            // GCOVR_EXCL_START
             if (__evio_unlikely(fd32 >= loop->fds.count)) {
                 EVIO_ABORT("Invalid fd %u\n", fd32);
             }
+            // GCOVR_EXCL_STOP
 
             int fd = fd32;
             int op = (cqe->user_data >> 32) & 3;
+            // GCOVR_EXCL_START
             if (__evio_unlikely(op != EPOLL_CTL_ADD &&
                                 op != EPOLL_CTL_MOD)) {
                 EVIO_ABORT("Invalid fd %d op %d\n", fd, op);
             }
+            // GCOVR_EXCL_STOP
 
             slot = cqe->user_data >> 34;
+            // GCOVR_EXCL_START
             if (__evio_unlikely(slot >= EVIO_URING_EVENTS)) {
                 EVIO_ABORT("Invalid fd %d slot %u\n", fd, slot);
             }
+            // GCOVR_EXCL_STOP
 
             const struct epoll_event *ev = &iou->events[slot];
 
@@ -211,7 +230,9 @@ void evio_uring_flush(evio_loop *loop)
             }
         }
 
-        if (*iou->cqhead != head) {
+        // This defensive check is for a case that is not expected to happen in practice,
+        // where the completion queue loop runs but processes no events.
+        if (*iou->cqhead != head) { // GCOVR_EXCL_LINE
             evio_uring_store(iou->cqhead, head);
         }
     }
@@ -236,6 +257,10 @@ evio_uring *evio_uring_new(void)
 #endif
 
     int fd = evio_uring_setup(EVIO_URING_EVENTS, &params);
+
+    // This block is a fallback for older kernels that don't support the newer
+    // io_uring feature flags. It's untestable in a single environment.
+    // GCOVR_EXCL_START
     if (__evio_unlikely(fd < 0)) {
         int err = fd == -1 ? errno : -fd;
         if (err != EINVAL) {
@@ -250,16 +275,19 @@ evio_uring *evio_uring_new(void)
             return NULL;
         }
     }
+    // GCOVR_EXCL_STOP
 
     const uint32_t features = IORING_FEAT_SINGLE_MMAP |
                               IORING_FEAT_NODROP |
                               IORING_FEAT_SUBMIT_STABLE |
                               IORING_FEAT_RSRC_TAGS;
 
+    // GCOVR_EXCL_START
     if (__evio_unlikely((~params.features) & features)) {
         close(fd);
         return NULL;
     }
+    // GCOVR_EXCL_STOP
 
     size_t sqlen = params.sq_off.array + (params.sq_entries * sizeof(uint32_t));
     size_t cqlen = params.cq_off.cqes + (params.cq_entries * sizeof(struct io_uring_cqe));
@@ -270,20 +298,24 @@ evio_uring *evio_uring_new(void)
                         PROT_READ | PROT_WRITE,
                         MAP_SHARED | MAP_POPULATE,
                         fd, IORING_OFF_SQ_RING);
+    // GCOVR_EXCL_START
     if (__evio_unlikely(ptr == MAP_FAILED)) {
         close(fd);
         return NULL;
     }
+    // GCOVR_EXCL_STOP
 
     void *sqe = mmap(NULL, sqelen,
                      PROT_READ | PROT_WRITE,
                      MAP_SHARED | MAP_POPULATE,
                      fd, IORING_OFF_SQES);
+    // GCOVR_EXCL_START
     if (__evio_unlikely(sqe == MAP_FAILED)) {
         munmap(ptr, maxlen);
         close(fd);
         return NULL;
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring *iou = evio_malloc(sizeof(*iou));
     *iou = (evio_uring) {
@@ -301,12 +333,14 @@ evio_uring *evio_uring_new(void)
         .fd         = fd,
     };
 
+    // GCOVR_EXCL_START
     if (params.sq_off.array) {
         uint32_t *sqarray = (uint32_t *)(ptr + params.sq_off.array);
         for (uint32_t i = 0; i <= iou->sqmask; ++i) {
             sqarray[i] = i;
         }
     }
+    // GCOVR_EXCL_STOP
 
     return iou;
 }

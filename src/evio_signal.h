@@ -27,7 +27,8 @@ typedef struct evio_signal {
 static inline __evio_nonnull(1)
 void evio_signal_set(evio_signal *w, int signum)
 {
-    EVIO_ASSERT(signum > 0 && signum < NSIG);
+    EVIO_ASSERT(signum > 0);
+    EVIO_ASSERT(signum < NSIG);
     w->signum = signum;
 }
 

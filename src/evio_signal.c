@@ -11,22 +11,28 @@ static evio_sig evio_signals[NSIG - 1];
  */
 static void evio_signal_cb(int signum)
 {
+    // GCOVR_EXCL_START
     if (__evio_unlikely(signum <= 0 || signum >= NSIG)) {
         return;
     }
+    // GCOVR_EXCL_STOP
 
     evio_sig *sig = &evio_signals[signum - 1];
 
     evio_loop *loop = atomic_load_explicit(&sig->loop, memory_order_acquire);
+    // GCOVR_EXCL_START
     if (__evio_unlikely(!loop)) {
         return;
     }
+    // GCOVR_EXCL_STOP
 
     atomic_store_explicit(&sig->status.value, 1, memory_order_release);
 
+    // GCOVR_EXCL_START
     if (!atomic_exchange_explicit(&loop->signal_pending.value, 1, memory_order_acq_rel)) {
         evio_eventfd_write(loop);
     }
+    // GCOVR_EXCL_STOP
 }
 
 void evio_signal_queue_events(evio_loop *loop, int signum)
@@ -87,7 +93,8 @@ void evio_signal_cleanup_loop(evio_loop *loop)
 
 void evio_signal_start(evio_loop *loop, evio_signal *w)
 {
-    EVIO_ASSERT(w->signum > 0 && w->signum < NSIG);
+    EVIO_ASSERT(w->signum > 0);
+    EVIO_ASSERT(w->signum < NSIG);
 
     if (__evio_unlikely(w->active)) {
         return;
@@ -127,7 +134,8 @@ void evio_signal_stop(evio_loop *loop, evio_signal *w)
         return;
     }
 
-    EVIO_ASSERT(w->signum > 0 && w->signum < NSIG);
+    EVIO_ASSERT(w->signum > 0);
+    EVIO_ASSERT(w->signum < NSIG);
 
     evio_sig *sig = &evio_signals[w->signum - 1];
 

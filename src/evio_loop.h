@@ -96,8 +96,12 @@ int evio_run(evio_loop *loop, int flags);
 
 /**
  * @brief Requests the event loop to stop running.
+ * @details This function is typically called from within a watcher callback.
+ * `EVIO_BREAK_ONE` will cause the current `evio_run` to return, while
+ * `EVIO_BREAK_ALL` will cause the current and all nested `evio_run` calls
+ * to return.
  * @param loop The event loop to stop.
- * @param state The break state (e.g., `EVIO_BREAK_ALL`).
+ * @param state The break state (`EVIO_BREAK_ONE` or `EVIO_BREAK_ALL`).
  */
 __evio_public __evio_nonnull(1)
 void evio_break(evio_loop *loop, int state);

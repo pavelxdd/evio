@@ -40,7 +40,7 @@
 #endif
 
 #ifndef __evio_nonnull
-#   if __evio_has_attribute(__nonnull__)
+#   if __evio_has_attribute(__nonnull__) && !defined(EVIO_TESTING)
 #       define __evio_nonnull(...) __attribute__((__nonnull__(__VA_ARGS__)))
 #   else
 #       define __evio_nonnull(...)
@@ -65,7 +65,7 @@
 
 #ifndef __evio_format_printf
 #   if __evio_has_attribute(__format__)
-#       define __evio_format_printf(f, a) __attribute__((__format__(printf, f, a)))
+#       define __evio_format_printf(f, a) __attribute__((__format__(__printf__, f, a)))
 #   else
 #       define __evio_format_printf(f, a)
 #   endif
@@ -146,8 +146,8 @@ enum {
 /** @brief Break states for `evio_break` to control loop termination. */
 enum {
     EVIO_BREAK_CANCEL   = 0, /**< Cancel a previous break request. */
-    EVIO_BREAK_ONE      = 1, /**< Stop after the current loop iteration. */
-    EVIO_BREAK_ALL      = 2, /**< Stop the event loop entirely. */
+    EVIO_BREAK_ONE      = 1, /**< Stop the current `evio_run` call. */
+    EVIO_BREAK_ALL      = 2, /**< Stop the current and all nested `evio_run` calls. */
 };
 
 #ifndef EVIO_CACHELINE
@@ -215,7 +215,10 @@ typedef void (*evio_cb)(evio_loop *loop, evio_base *base, evio_mask emask);
  */
 #define EVIO_COMMON \
     size_t active;  /**< 1-based index if active, 0 otherwise. */ \
-    size_t pending; /**< 1-based index if pending, 0 otherwise. */ \
+    size_t pending; /**< A 1-based index into the pending event queue. \
+                         *   It is 0 if the watcher is not pending. Internally, it also \
+                         *   encodes which of the two pending queues the event is in. \
+                         *   (value = (array_index << 1) + 1 + queue_index) */ \
     void *data;     /**< User-assignable data pointer. */ \
     evio_cb cb;     /**< Watcher's callback function. */
 

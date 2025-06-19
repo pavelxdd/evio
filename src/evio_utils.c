@@ -1,31 +1,51 @@
 #include "evio_core.h"
 #include "evio_utils.h"
 
-static evio_abort_cb evio_abort_custom = NULL;
+static struct {
+    evio_abort_cb cb;
+    void *ctx;
+} evio_abort_custom = {
+    .cb = NULL,
+    .ctx = NULL,
+};
 
-void evio_set_abort(evio_abort_cb cb)
+void evio_set_abort(evio_abort_cb cb, void *ctx)
 {
-    evio_abort_custom = cb;
+    if (cb) {
+        evio_abort_custom.cb = cb;
+        evio_abort_custom.ctx = ctx;
+    } else {
+        evio_abort_custom.cb = NULL;
+        evio_abort_custom.ctx = NULL;
+    }
 }
 
-evio_abort_cb evio_get_abort(void)
+evio_abort_cb evio_get_abort(void **ctx)
 {
-    return evio_abort_custom;
+    if (ctx) {
+        *ctx = evio_abort_custom.ctx;
+    }
+    return evio_abort_custom.cb;
+}
+
+static void (*evio_default_abort)(void) = abort;
+
+void evio_set_abort_func(void (*func)(void))
+{
+    evio_default_abort = func ? func : abort;
+}
+
+void (*evio_get_abort_func(void))(void)
+{
+    return evio_default_abort;
 }
 
 void evio_abort(const char *restrict file, int line,
                 const char *restrict func, const char *restrict format, ...)
 {
-    FILE *stream = stderr;
+    FILE *stream = evio_abort_custom.cb ?
+                   evio_abort_custom.cb(evio_abort_custom.ctx) : stderr;
 
-    if (evio_abort_custom) {
-        va_list ap;
-        va_start(ap, format);
-        stream = evio_abort_custom(file, line, func, format, ap);
-        va_end(ap);
-    }
-
-    // GCOVR_EXCL_START
     if (stream) {
         char str[4096];
         char *p = str;
@@ -45,9 +65,10 @@ void evio_abort(const char *restrict file, int line,
         fwrite(str, 1, (size_t)(p - str), stream);
         fflush(stream);
     }
-    // GCOVR_EXCL_STOP
 
-    abort();
+    evio_default_abort();
+
+    __builtin_unreachable(); // GCOVR_EXCL_LINE
 }
 
 #ifdef __GLIBC__

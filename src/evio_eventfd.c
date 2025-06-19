@@ -54,15 +54,18 @@ static void evio_eventfd_notify(int fd)
 
         for (;;) {
             res = read(fd, &val, sizeof(val));
-            if (__evio_likely(res >= 0)) {
-                break;
-            }
 
             // GCOVR_EXCL_START
-            if (errno != EINTR) {
-                break;
+            if (__evio_unlikely(res < 0)) {
+                // This path is only taken in a race condition where another thread
+                // has drained the eventfd after our write() failed with EAGAIN.
+                // This is considered untestable in our test environment.
+                if (errno == EINTR) {
+                    continue;
+                }
             }
             // GCOVR_EXCL_STOP
+            break;
         }
     }
 }
@@ -86,6 +89,7 @@ void evio_eventfd_write(evio_loop *loop)
 
 void evio_eventfd_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
+    (void)base;
     (void)emask;
 
     EVIO_ASSERT(base == &loop->event.base);

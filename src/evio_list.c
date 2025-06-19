@@ -3,17 +3,15 @@
 
 void *evio_list_resize(void *ptr, size_t size, size_t count, size_t *total)
 {
+    EVIO_ASSERT(size);
+    EVIO_ASSERT(count <= PTRDIFF_MAX / size);
+
     if (__evio_likely(*total >= count)) {
         EVIO_ASSERT(ptr);
         return ptr;
     }
 
-    if (__evio_unlikely(count > PTRDIFF_MAX)) {
-        *total = count;
-    } else {
-        *total = 1ULL << (sizeof(unsigned long long) * 8 - __builtin_clzll(count));
-    }
-
+    *total = 1ULL << (sizeof(unsigned long long) * 8 - __builtin_clzll(count));
     return evio_reallocarray(ptr, *total, size);
 }
 

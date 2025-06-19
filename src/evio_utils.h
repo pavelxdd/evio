@@ -15,9 +15,7 @@
  * @brief Asserts a condition, calling `evio_assert` if it fails.
  * This macro can be overridden by the user.
  */
-#define EVIO_ASSERT(...) do { \
-        evio_assert(__VA_ARGS__); \
-    } while (0)
+#define EVIO_ASSERT(...) evio_assert(__VA_ARGS__)
 #endif
 
 #ifndef evio_assert
@@ -37,40 +35,36 @@
  * @param ... A printf-style format string and optional arguments. If empty,
  *            no custom message is printed.
  */
-#define EVIO_ABORT(...) do { \
-        evio_abort(__FILE__, __LINE__, __func__, __VA_ARGS__); \
-        __builtin_unreachable(); \
-    } while (0)
+#define EVIO_ABORT(...) evio_abort(__FILE__, __LINE__, __func__, __VA_ARGS__)
 #endif
 
 /**
  * @brief A callback function pointer for a custom abort handler.
  *
- * The handler can perform cleanup and logging before the program terminates.
- * @param file The source file where the abort was triggered.
- * @param line The line number in the source file.
- * @param func The function name where the abort was triggered.
- * @param format The format string for the abort message.
- * @param ap The variable arguments list for the format string.
+ * The handler can perform cleanup before the program terminates.
+ * @param ctx The user-defined context pointer.
  * @return A stream (e.g., `stderr`) for the default abort message to be
  *         written to, or `NULL` to suppress the default message.
  */
-typedef FILE *(*evio_abort_cb)(const char *file, int line,
-                               const char *func, const char *format, va_list ap);
+typedef FILE *(*evio_abort_cb)(void *ctx);
 
 /**
  * @brief Sets a custom abort handler for the entire library.
+ * This function is not thread-safe and should be called before any other evio
+ * functions are used.
  * @param cb The callback function to be called on abort.
+ * @param ctx A user-defined context pointer to be passed to the callback.
  */
 __evio_public
-void evio_set_abort(evio_abort_cb cb);
+void evio_set_abort(evio_abort_cb cb, void *ctx);
 
 /**
  * @brief Gets the current custom abort handler.
+ * @param[out] ctx If not NULL, the user-defined context pointer is stored here.
  * @return The current abort handler callback, or NULL if not set.
  */
-__evio_public __evio_nodiscard
-evio_abort_cb evio_get_abort(void);
+__evio_public __evio_nodiscard __evio_returns_nonnull
+evio_abort_cb evio_get_abort(void **ctx);
 
 /**
  * @brief Backing implementation for the EVIO_ABORT macro. Do not call directly.
@@ -84,6 +78,23 @@ __evio_public __evio_nonnull(1, 3, 4)
 __evio_noreturn __evio_format_printf(4, 5)
 void evio_abort(const char *restrict file, int line,
                 const char *restrict func, const char *restrict format, ...);
+
+/**
+ * @brief Overrides the program termination function.
+ * @details This is intended for testing purposes to override the default
+ * `abort()` behavior.
+ * @param func The function to call instead of `abort()`.
+ *             If NULL, `abort()` is restored.
+ */
+__evio_public
+void evio_set_abort_func(void (*func)(void));
+
+/**
+ * @brief Gets the current program termination function.
+ * @return The function pointer that will be called to terminate the program.
+ */
+__evio_public __evio_nodiscard
+void (*evio_get_abort_func(void))(void);
 
 #ifndef EVIO_STRERROR_SIZE
 /** @brief The default buffer size for the `EVIO_STRERROR` macro. */

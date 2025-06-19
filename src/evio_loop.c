@@ -14,7 +14,8 @@ static __evio_nonnull(1) __evio_nodiscard
 evio_time evio_clock_gettime(const evio_loop *loop)
 {
     struct timespec ts;
-    if (__evio_unlikely(clock_gettime(loop->clock_id, &ts) < 0)) {
+    int rc = clock_gettime(loop->clock_id, &ts);
+    if (__evio_unlikely(rc < 0)) {
         int err = errno;
         EVIO_ABORT("clock_gettime() failed, error %d: %s\n", err, EVIO_STRERROR(err));
     }
@@ -47,17 +48,14 @@ static int evio_timeout(evio_loop *loop)
         return 0;
     }
 
-    evio_time diff = node->time - loop->time;
-    if (__evio_unlikely(diff > EVIO_TIME_MAX - (EVIO_TIME_PER_MSEC - 1))) {
+    const evio_time diff_ns = node->time - loop->time;
+    const evio_time diff_ms = diff_ns / EVIO_TIME_PER_MSEC;
+
+    if (__evio_unlikely(diff_ms >= INT_MAX)) {
         return INT_MAX;
     }
 
-    diff = (diff + (EVIO_TIME_PER_MSEC - 1)) / EVIO_TIME_PER_MSEC;
-    if (__evio_unlikely(diff > INT_MAX)) {
-        return INT_MAX;
-    }
-
-    return (int)diff;
+    return (int)diff_ms + !!(diff_ns % EVIO_TIME_PER_MSEC);
 }
 
 evio_loop *evio_loop_new(int flags)
@@ -78,12 +76,14 @@ evio_loop *evio_loop_new(int flags)
         loop->iou = evio_uring_new();
     }
 
+    // GCOVR_EXCL_START
     struct timespec ts;
     if (!clock_getres(CLOCK_MONOTONIC_COARSE, &ts) && ts.tv_nsec <= 1000000) {
         loop->clock_id = CLOCK_MONOTONIC_COARSE;
     } else {
         loop->clock_id = CLOCK_MONOTONIC;
     }
+    // GCOVR_EXCL_STOP
 
     loop->time = evio_clock_gettime(loop);
 
@@ -98,7 +98,8 @@ evio_loop *evio_loop_new(int flags)
 
 void evio_loop_free(evio_loop *loop)
 {
-    loop->pending.count = 0;
+    loop->pending[0].count = 0;
+    loop->pending[1].count = 0;
 
     if (loop->cleanup.count) {
         evio_queue_events(loop, loop->cleanup.ptr, loop->cleanup.count, EVIO_CLEANUP);
@@ -122,7 +123,8 @@ void evio_loop_free(evio_loop *loop)
         evio_free(fds->list.ptr);
     }
 
-    evio_free(loop->pending.ptr);
+    evio_free(loop->pending[0].ptr);
+    evio_free(loop->pending[1].ptr);
     evio_free(loop->fds.ptr);
     evio_free(loop->fdchanges.ptr);
     evio_free(loop->fderrors.ptr);
@@ -178,6 +180,11 @@ void *evio_get_userdata(const evio_loop *loop)
 
 int evio_run(evio_loop *loop, int flags)
 {
+    int done = loop->done;
+    if (done == EVIO_BREAK_ALL) {
+        return 0;
+    }
+
     flags &= EVIO_RUN_NOWAIT | EVIO_RUN_ONCE;
     loop->done = EVIO_BREAK_CANCEL;
     evio_invoke_pending(loop);
@@ -206,7 +213,7 @@ int evio_run(evio_loop *loop, int flags)
         loop->time = evio_clock_gettime(loop);
         evio_timer_update(loop);
 
-        if (loop->idle.count && !loop->pending.count) {
+        if (loop->idle.count && !loop->pending[loop->pending_queue].count) {
             evio_queue_events(loop, loop->idle.ptr, loop->idle.count, EVIO_IDLE);
         }
 
@@ -222,11 +229,19 @@ int evio_run(evio_loop *loop, int flags)
                  flags == EVIO_RUN_DEFAULT
              ));
 
-    if (loop->done == EVIO_BREAK_ONE) {
-        loop->done = EVIO_BREAK_CANCEL;
+    // GCOVR_EXCL_START
+    EVIO_ASSERT(loop->pending[loop->pending_queue].count == 0);
+    // GCOVR_EXCL_STOP
+
+    if (loop->done == EVIO_BREAK_ALL) {
+        return 0;
     }
 
-    return loop->refcount || loop->pending.count;
+    if (loop->done == EVIO_BREAK_ONE) {
+        loop->done = done;
+    }
+
+    return loop->refcount;
 }
 
 void evio_break(evio_loop *loop, int state)

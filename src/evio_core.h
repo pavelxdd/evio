@@ -39,11 +39,17 @@
 /** @brief Internal flag indicating an invalidated file descriptor. */
 #define EVIO_FD_INVAL 0x80u
 
+/** @brief A bitmask for file-descriptor flags (e.g., `EVIO_FD_INVAL`). */
+typedef uint16_t evio_flag;
+
 /** @brief A pending event to be processed. */
 typedef struct {
     evio_base *base;    /**< The watcher that the event belongs to. */
     evio_mask emask;    /**< The event mask for the pending event. */
 } evio_pending;
+
+/** @brief A list of pending events, used for the double-buffered queue. */
+typedef EVIO_LIST(evio_pending) evio_pending_list;
 
 /** @brief Per-file-descriptor data. */
 typedef struct {
@@ -51,9 +57,8 @@ typedef struct {
     size_t changes;     /**< 1-based index in the fdchanges list. */
     size_t errors;      /**< 1-based index in the fderrors list. */
     uint32_t gen;       /**< Generation counter to handle stale events. */
-    uint8_t emask;      /**< The current event mask registered with epoll. */
-    uint8_t cache;      /**< The previous event mask, for change detection. */
-    uint8_t flags;      /**< Flags for the fd state (e.g., `EVIO_FD_INVAL`). */
+    evio_mask emask;    /**< The current event mask registered with epoll. */
+    evio_flag flags;    /**< Flags for the fd state (e.g., `EVIO_FD_INVAL`). */
 } evio_fds;
 
 /** @brief Per-signal data. */
@@ -77,6 +82,7 @@ struct evio_loop {
 
     int fd;                     /**< The main epoll file descriptor. */
     int done;                   /**< The loop's break state. */
+    int pending_queue;          /**< The index of the active pending queue (0 or 1). */
 
     evio_poll event;            /**< The internal eventfd poll watcher. */
 
@@ -85,7 +91,8 @@ struct evio_loop {
     EVIO_ATOMIC(int) async_pending; /**< Flag indicating pending async events. */
     EVIO_ATOMIC(int) signal_pending;/**< Flag indicating pending signal events. */
 
-    EVIO_LIST(evio_pending) pending;/**< Queue of pending events for the current iteration. */
+    evio_pending_list pending[2];   /**< Double-buffered queue for pending events. */
+
     EVIO_LIST(evio_fds) fds;        /**< Array of per-file-descriptor data. */
     EVIO_LIST(int) fdchanges;       /**< List of fds with pending changes. */
     EVIO_LIST(int) fderrors;        /**< List of fds with pending errors. */
@@ -138,7 +145,7 @@ void evio_queue_fd_events(evio_loop *loop, int fd, evio_mask emask);
  * @param flags The change flags.
  */
 __evio_nonnull(1)
-void evio_queue_fd_change(evio_loop *loop, int fd, uint8_t flags);
+void evio_queue_fd_change(evio_loop *loop, int fd, evio_flag flags);
 
 /**
  * @brief Queues an error notification for a file descriptor.
