@@ -98,6 +98,8 @@ The `evio` loop processes events in a well-defined order during each iteration:
 Here is a minimal example demonstrating a repeating timer and a signal handler.
 
 ```c
+#include <stdlib.h>
+#include <stdio.h>
 #include <evio/evio.h>
 
 // A struct to hold our user data.
@@ -139,7 +141,7 @@ int main(void)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     if (!loop) {
         fprintf(stderr, "Failed to create event loop.\n");
-        return 1;
+        return EXIT_FAILURE;
     }
 
     // 2. Initialize a repeating timer.
@@ -170,7 +172,7 @@ int main(void)
 
     // 7. Free the event loop and all associated resources.
     evio_loop_free(loop);
-    return 0;
+    return EXIT_SUCCESS;
 }
 ```
 

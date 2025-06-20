@@ -199,6 +199,36 @@ if get_option('tests')
     endif
 endif
 
+if get_option('examples')
+    threads = dependency('threads', required: true)
+
+    examples = [
+        'loop',
+        'poll',
+        'timer',
+        'signal',
+        'async',
+        'idle',
+        'prepare',
+        'check',
+        'cleanup',
+        'once',
+    ]
+
+    examples_target = []
+
+    foreach name : examples
+        examples_target += executable('example-' + name, 'examples' / (name + '.c'),
+            link_with: libevio,
+            include_directories: include_directories('src'),
+            dependencies: [threads],
+            install: false,
+        )
+    endforeach
+
+    alias_target('examples', examples_target)
+endif
+
 astyle = find_program('astyle', required: false)
 if astyle.found()
     custom_target('astyle',
@@ -211,6 +241,8 @@ if astyle.found()
             current_source_dir / 'src/*.h',
             current_source_dir / 'tests/*.c',
             current_source_dir / 'tests/*.h',
+            current_source_dir / 'examples/*.c',
+            current_source_dir / 'examples/*.h',
         ],
         console: true,
         build_by_default: false
