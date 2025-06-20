@@ -13,6 +13,7 @@ project('evio', 'c',
 )
 
 current_source_dir = meson.current_source_dir()
+current_build_dir = meson.current_build_dir()
 
 cc = meson.get_compiler('c')
 
@@ -83,7 +84,22 @@ add_project_arguments(
     language: 'c'
 )
 
+libevio_version_arr = meson.project_version().split('.')
+libevio_version = '@0@.@1@.0'.format(libevio_version_arr[0], libevio_version_arr[1])
+
+conf_data = configuration_data()
+conf_data.set('EVIO_VERSION_MAJOR', libevio_version_arr[0])
+conf_data.set('EVIO_VERSION_MINOR', libevio_version_arr[1])
+conf_data.set('EVIO_VERSION_PATCH', libevio_version_arr[2])
+
+evio_version = configure_file(
+    input: 'src/evio_version.h.in',
+    output: 'evio_version.h',
+    configuration: conf_data
+)
+
 evio_sources = files(
+    'src/evio_version.c',
     'src/evio_utils.c',
     'src/evio_alloc.c',
     'src/evio_core.c',
@@ -123,16 +139,20 @@ evio_headers = files(
     'src/evio_once.h',
 )
 
-libevio_version_arr = meson.project_version().split('.')
-libevio_version = '@0@.@1@.0'.format(libevio_version_arr[0], libevio_version_arr[1])
-
 libevio = library('evio', evio_sources,
     version: libevio_version,
     gnu_symbol_visibility: 'hidden',
+    c_args: [
+        '-I' + current_build_dir,
+    ],
     install: true
 )
 
-install_headers(evio_headers, subdir: 'evio')
+install_headers(
+    evio_headers,
+    evio_version,
+    subdir: 'evio'
+)
 
 pkg = import('pkgconfig')
 pkg.generate(libevio,
@@ -142,8 +162,12 @@ pkg.generate(libevio,
 )
 
 if get_option('tests')
+    cmocka_dep = dependency('cmocka', required: true)
+    threads_dep = dependency('threads', required: true)
+
     test_sources = evio_sources + files(
         'tests/test.c',
+        'tests/test_version.c',
         'tests/test_utils.c',
         'tests/test_alloc.c',
         'tests/test_core.c',
@@ -164,20 +188,21 @@ if get_option('tests')
     )
 
     evio_tests = executable('evio_tests', test_sources,
-        c_args: cc.get_supported_arguments([
+        c_args: [
+            '-I' + current_build_dir,
             '-DEVIO_TESTING=1',
             '-UNDEBUG',
             '-fno-inline',
-        ]),
-        override_options: ['b_ndebug=false'],
+        ],
         include_directories: [
             include_directories('src'),
             include_directories('tests/include', is_system: true),
         ],
         dependencies: [
-            dependency('cmocka', required: true),
-            dependency('threads', required: true),
+            cmocka_dep,
+            threads_dep,
         ],
+        override_options: ['b_ndebug=false'],
         install: false,
     )
 
@@ -200,7 +225,7 @@ if get_option('tests')
 endif
 
 if get_option('examples')
-    threads = dependency('threads', required: true)
+    threads_dep = dependency('threads', required: true)
 
     examples = [
         'loop',
@@ -218,15 +243,80 @@ if get_option('examples')
     examples_target = []
 
     foreach name : examples
-        examples_target += executable('example-' + name, 'examples' / (name + '.c'),
+        exe = executable('example-' + name, 'examples' / (name + '.c'),
             link_with: libevio,
-            include_directories: include_directories('src'),
-            dependencies: [threads],
+            c_args: [
+                '-I' + current_build_dir,
+            ],
+            include_directories: [
+                include_directories('src'),
+            ],
+            dependencies: [threads_dep],
             install: false,
         )
+        examples_target += exe
     endforeach
 
     alias_target('examples', examples_target)
+endif
+
+if get_option('benchmarks')
+    python = find_program('python3', required: true)
+    python_deps = run_command(python, '-c', 'import matplotlib, numpy', check: false).returncode() == 0
+
+    libev_dep = dependency('libev', required: false)
+    if not libev_dep.found()
+        if not cc.has_header('ev.h')
+            error('libev header "ev.h" not found. Please install libev development files.')
+        endif
+        ev_library = cc.find_library('ev', required: true)
+        libev_dep = declare_dependency(dependencies: ev_library)
+    endif
+
+    libuv_dep = dependency('libuv', required: true)
+    threads_dep = dependency('threads', required: true)
+
+    benchmarks = [
+        'poll',
+        'timer',
+        'signal',
+        'async',
+        'idle',
+    ]
+
+    foreach name : benchmarks
+        exe = executable('bench-' + name,
+            files('benchmarks' / ('bench_' + name + '.c')) + files('benchmarks/bench.c'),
+            c_args: [
+                '-I' + current_build_dir,
+                '-Wno-unused-parameter',
+                '-Wno-unused-function',
+            ],
+            include_directories: [
+                include_directories('src'),
+            ],
+            link_with: libevio,
+            dependencies: [
+                libev_dep,
+                libuv_dep,
+                threads_dep,
+            ],
+            install: false
+        )
+        benchmark(name.to_upper() + ' Benchmark', exe)
+    endforeach
+
+    if python_deps
+        run_target('benchmark-plot',
+            command: [
+                python, current_source_dir / 'benchmarks/plot.py',
+                '--input', current_build_dir / 'meson-logs/benchmarklog.txt',
+                '--output', current_build_dir / 'benchmarks.png'
+            ]
+        )
+    else
+        warning('matplotlib or numpy not found, skipping benchmark plotting.')
+    endif
 endif
 
 astyle = find_program('astyle', required: false)
@@ -237,12 +327,9 @@ if astyle.found()
             astyle,
             '--options=@0@/.astylerc'.format(current_source_dir),
             '-Q', '-n', '-r',
-            current_source_dir / 'src/*.c',
-            current_source_dir / 'src/*.h',
-            current_source_dir / 'tests/*.c',
-            current_source_dir / 'tests/*.h',
-            current_source_dir / 'examples/*.c',
-            current_source_dir / 'examples/*.h',
+            current_source_dir / '*.c',
+            current_source_dir / '*.h',
+            current_source_dir / '*.h.in',
         ],
         console: true,
         build_by_default: false

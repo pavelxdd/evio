@@ -1,5 +1,7 @@
 option('tests', type: 'boolean', value: false,
        description: 'enable unit tests')
+option('benchmarks', type: 'boolean', value: false,
+       description: 'build benchmarks')
 option('examples', type: 'boolean', value: false,
        description: 'build examples')
 option('valgrind', type: 'boolean', value: false,

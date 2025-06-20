@@ -292,7 +292,7 @@ TEST(test_evio_poll_uring_autoflush)
 
     // This loop should trigger the auto-flush logic in evio_uring_ctl
     // when the submission queue becomes full.
-    for (int i = 0; i < EVIO_URING_EVENTS; ++i) {
+    for (size_t i = 0; i < EVIO_URING_EVENTS; ++i) {
         fds[i][0] = fds[i][1] = -1;
         assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds[i]), 0);
         evio_poll_init(&io[i], generic_cb, fds[i][0], EVIO_READ);
@@ -308,7 +308,7 @@ TEST(test_evio_poll_uring_autoflush)
     assert_int_equal(generic_cb_called, 1);
 
     // Cleanup
-    for (int i = 0; i < EVIO_URING_EVENTS; ++i) {
+    for (size_t i = 0; i < EVIO_URING_EVENTS; ++i) {
         evio_poll_stop(loop, &io[i]);
         close(fds[i][0]);
         close(fds[i][1]);
@@ -351,7 +351,7 @@ TEST(test_evio_poll_uring_many_events)
 
     // 1. Setup phase: initialize and start all watchers.
     // This will repeatedly fill and flush the io_uring submission queue.
-    for (int i = 0; i < MANY_URING_EVENTS; ++i) {
+    for (size_t i = 0; i < MANY_URING_EVENTS; ++i) {
         fds[i][0] = fds[i][1] = -1;
         assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds[i]), 0);
         evio_poll_init(&io[i], read_and_count_cb, fds[i][0], EVIO_READ);
@@ -363,7 +363,7 @@ TEST(test_evio_poll_uring_many_events)
     assert_int_equal(generic_cb_called, 0);
 
     // 3. Event generation phase: write to all sockets to make them readable.
-    for (int i = 0; i < MANY_URING_EVENTS; ++i) {
+    for (size_t i = 0; i < MANY_URING_EVENTS; ++i) {
         assert_int_equal(write(fds[i][1], "x", 1), 1);
     }
 
@@ -372,7 +372,7 @@ TEST(test_evio_poll_uring_many_events)
     assert_int_equal(generic_cb_called, MANY_URING_EVENTS);
 
     // 5. Cleanup phase.
-    for (int i = 0; i < MANY_URING_EVENTS; ++i) {
+    for (size_t i = 0; i < MANY_URING_EVENTS; ++i) {
         evio_poll_stop(loop, &io[i]);
         close(fds[i][0]);
         close(fds[i][1]);

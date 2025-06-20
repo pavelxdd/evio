@@ -6,7 +6,7 @@ repos:
       entry: astyle -Q -n
       args: ['--options=.astylerc']
       language: system
-      types: [c]
+      files: \.(c|h|h\.in)$
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0

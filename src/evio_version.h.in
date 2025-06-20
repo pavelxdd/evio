@@ -1,0 +1,34 @@
+#pragma once
+
+/**
+ * @file evio_version.h
+ * @brief Version information for the evio library.
+ */
+
+/** @brief The major version of the evio library. */
+#define EVIO_VERSION_MAJOR @EVIO_VERSION_MAJOR@
+/** @brief The minor version of the evio library. */
+#define EVIO_VERSION_MINOR @EVIO_VERSION_MINOR@
+/** @brief The patch version of the evio library. */
+#define EVIO_VERSION_PATCH @EVIO_VERSION_PATCH@
+
+/**
+ * @brief Gets the major version number of the evio library.
+ * @return The major version number.
+ */
+__evio_public __evio_nodiscard
+unsigned int evio_version_major(void);
+
+/**
+ * @brief Gets the minor version number of the evio library.
+ * @return The minor version number.
+ */
+__evio_public __evio_nodiscard
+unsigned int evio_version_minor(void);
+
+/**
+ * @brief Gets the patch version number of the evio library.
+ * @return The patch version number.
+ */
+__evio_public __evio_nodiscard
+unsigned int evio_version_patch(void);

@@ -278,7 +278,7 @@ TEST(test_evio_timer_many)
     assert_non_null(loop);
 
     evio_timer tm[MANY_TIMERS];
-    for (int i = 0; i < MANY_TIMERS; ++i) {
+    for (size_t i = 0; i < MANY_TIMERS; ++i) {
         // Use small, slightly varied timeouts to stress heap
         evio_timer_init(&tm[i], generic_cb, 0);
         evio_timer_start(loop, &tm[i], EVIO_TIME_FROM_MSEC(i + 1));
@@ -305,7 +305,7 @@ TEST(test_evio_timer_random)
     evio_timer tm[MANY_RANDOM_TIMERS];
     srand(time(NULL));
 
-    for (int i = 0; i < MANY_RANDOM_TIMERS; ++i) {
+    for (size_t i = 0; i < MANY_RANDOM_TIMERS; ++i) {
         evio_timer_init(&tm[i], generic_cb, 0);
         // random timeout between 0 and 99 ms
         evio_timer_start(loop, &tm[i], EVIO_TIME_FROM_MSEC(rand() % 100));

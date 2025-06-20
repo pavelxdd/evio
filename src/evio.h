@@ -106,6 +106,7 @@
 
 // IWYU pragma: begin_exports
 
+#include "evio_version.h"
 #include "evio_utils.h"
 #include "evio_alloc.h"
 

@@ -1,6 +1,5 @@
 #include <stdlib.h>
 #include <stdio.h>
-#include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
 
@@ -55,13 +54,7 @@ int main(void)
     // 4. Create a new thread to send the async signal.
     pthread_t thread;
     thread_data_t thread_data = { .loop = loop, .w = &w };
-
-    int err = pthread_create(&thread, NULL, thread_func, &thread_data);
-    if (err != 0) {
-        errno = err;
-        perror("pthread_create");
-        return EXIT_FAILURE;
-    }
+    pthread_create(&thread, NULL, thread_func, &thread_data);
 
     printf("[Main] Event loop running. Waiting for async event from thread.\n");
 
