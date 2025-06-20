@@ -167,6 +167,12 @@ void evio_feed_signal(evio_loop *loop, int signum);
 
 /**
  * @brief Invokes all pending callbacks immediately.
+ * @details This function processes all events currently in the pending queue.
+ * @note This function is re-entrant. If called from within a watcher callback,
+ * it will immediately begin processing any newly queued events before the
+ * current callback or the original `evio_invoke_pending` call returns. This
+ * results in a depth-first event processing order. Users should be cautious,
+ * as deep recursion can lead to stack exhaustion.
  * @param loop The event loop.
  */
 __evio_public __evio_nonnull(1)

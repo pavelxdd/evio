@@ -807,7 +807,10 @@ static void flaw_cb2(evio_loop *loop, evio_base *w, evio_mask emask)
     }
 }
 
-TEST(test_evio_invoke_pending_reentrancy_flaw)
+// This test demonstrates the recursive nature of evio_invoke_pending.
+// A re-entrant call from a callback will immediately process new events,
+// leading to deep recursion. A limit is used to prevent stack overflow.
+TEST(test_evio_invoke_pending_recursion)
 {
     flaw_cb1_called = 0;
     flaw_cb2_called = 0;
@@ -826,16 +829,14 @@ TEST(test_evio_invoke_pending_reentrancy_flaw)
 
     evio_loop_free(loop);
 
-    // With a correct re-entrancy guard, the inner invoke_pending would be a no-op.
-    // The top-level call would process events iteratively. Without the guard,
-    // this test demonstrates the deep recursion by hitting the safety limit.
+    // evio_invoke_pending is re-entrant, so this test demonstrates the deep
+    // recursion that occurs, hitting the safety limit.
     assert_int_equal(flaw_cb1_called, RECURSION_LIMIT);
     assert_int_equal(flaw_cb2_called, RECURSION_LIMIT);
 }
 
-// This test highlights the architectural flaw of a non-re-entrant
-// evio_invoke_pending. It demonstrates that event processing order becomes
-// incorrect, rather than just causing a stack overflow.
+// This test demonstrates the depth-first event processing order that results
+// from the re-entrant nature of evio_invoke_pending.
 static evio_prepare p_reentrant_A, p_reentrant_B, p_reentrant_C;
 static char execution_order[4];
 static int execution_idx;
@@ -870,7 +871,9 @@ static void reentrant_cb_C(evio_loop *loop, evio_base *w, evio_mask emask)
     execution_order[execution_idx++] = 'C';
 }
 
-TEST(test_evio_invoke_pending_reentrancy_abc)
+// This test verifies the depth-first event processing order ("ACB") that results
+// from re-entrant calls to evio_invoke_pending.
+TEST(test_evio_invoke_pending_depth_first_order)
 {
     execution_idx = 0;
     memset(execution_order, 0, sizeof(execution_order));
@@ -893,9 +896,7 @@ TEST(test_evio_invoke_pending_reentrancy_abc)
     evio_invoke_pending(loop);
     evio_loop_free(loop);
 
-    // With a re-entrancy guard, the order should be "ABC".
-    // Without the guard, the re-entrant call in cb_A processes C
-    // before B gets a chance, so the order is "ACB".
-    // This test asserts the flawed behavior.
+    // The re-entrant call in cb_A processes C immediately, before B gets a
+    // chance, so the expected depth-first order is "ACB".
     assert_string_equal(execution_order, "ACB");
 }

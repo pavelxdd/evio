@@ -64,6 +64,10 @@ The main watcher types are:
 - `evio_feed_fd_error(loop, fd)`: Queues an I/O error for all watchers on a given file descriptor.
 - `evio_feed_signal(loop, signum)`: Simulates the delivery of a POSIX signal.
 
+### Re-entrant Event Invocation
+
+The `evio_invoke_pending(loop)` function, which is called internally by `evio_run()`, is re-entrant. If a watcher callback calls `evio_invoke_pending()` again, it will immediately start processing newly queued events before the original call returns. This results in a depth-first event processing order. While this can be a powerful feature for immediate, nested event handling, developers should be mindful that deep recursion can lead to stack exhaustion.
+
 ### Customization
 
 The library includes several customization functions for convenience:
