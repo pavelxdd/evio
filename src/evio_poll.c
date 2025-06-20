@@ -148,8 +148,6 @@ void evio_poll_update(evio_loop *loop)
             continue;
         }
 
-        // These branches handle epoll_ctl failures that are hard to trigger
-        // in a reliable, deterministic way in a unit test.
         switch (errno) {
             case EEXIST: {
                 int rc = epoll_ctl(loop->fd, EPOLL_CTL_MOD, fd, &ev);
@@ -227,17 +225,11 @@ void evio_poll_wait(evio_loop *loop, int timeout)
 
         evio_fds *fds = &loop->fds.ptr[fd];
 
-        // This is a stale event for a previous generation of the fd.
-        // This can happen if an fd is stopped and quickly restarted.
         // GCOVR_EXCL_START
         if (__evio_unlikely(fds->gen != (ev->data.u64 >> 32))) {
             continue;
         }
-        // GCOVR_EXCL_STOP
 
-        // This can happen if an event is received for an fd that has
-        // already been invalidated (e.g., all watchers stopped).
-        // GCOVR_EXCL_START
         if (!evio_invalidate_fd(loop, fd)) {
             continue;
         }
@@ -248,9 +240,6 @@ void evio_poll_wait(evio_loop *loop, int timeout)
             ((ev->events & (EPOLLOUT | EPOLLERR | EPOLLHUP)) ? EVIO_WRITE  : 0) |
             ((ev->events & (EPOLLET))                        ? EVIO_POLLET : 0);
 
-        // This block handles spurious events where the kernel reports an event
-        // that the library is not currently watching for. This is a rare race
-        // condition and is difficult to test reliably.
         // GCOVR_EXCL_START
         if (__evio_unlikely(emask & ~fds->emask)) {
             ev->events = ((fds->emask & EVIO_READ)   ? EPOLLIN  : 0) |
@@ -268,16 +257,9 @@ void evio_poll_wait(evio_loop *loop, int timeout)
                 evio_uring_ctl(loop, op, fd, ev);
             }
         }
-        // GCOVR_EXCL_STOP
 
-        // This else branch handles a race where an event is received for an fd
-        // that also has a pending change. This is difficult to test reliably.
-        // GCOVR_EXCL_START
         if (__evio_likely(!fds->changes)) {
             evio_queue_fd_events(loop, fd, emask);
-        } else {
-            // If a change is pending, drop the event. The fd will be re-evaluated
-            // after the change is processed in the next iteration.
         }
         // GCOVR_EXCL_STOP
     }
@@ -286,9 +268,6 @@ void evio_poll_wait(evio_loop *loop, int timeout)
         evio_uring_flush(loop);
     }
 
-    // This path is for when the event buffer is full, requiring a resize.
-    // It's a defensive mechanism that is hard to trigger in a unit test
-    // without creating an excessive number of file descriptors.
     // GCOVR_EXCL_START
     if (__evio_unlikely((size_t)events_count == loop->events.count &&
                         (size_t)events_count < EVIO_MAX_EVENTS)) {
@@ -310,8 +289,6 @@ void evio_poll_wait(evio_loop *loop, int timeout)
         EVIO_ASSERT(fds->errors == i + 1);
         // GCOVR_EXCL_STOP
 
-        // This block handles a race where an fd has a pending error and a
-        // pending change simultaneously. This is difficult to test reliably.
         // GCOVR_EXCL_START
         if (fds->emask && __evio_likely(!fds->changes)) {
             evio_queue_fd_events(loop, fd, fds->emask);

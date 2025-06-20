@@ -100,8 +100,6 @@ static void evio_uring_submit_and_wait(evio_loop *loop)
     EVIO_ASSERT(n);
     // GCOVR_EXCL_STOP
 
-    // This loop handles EINTR and other rare syscall errors, which are not
-    // reliably testable. The core logic is the single call to io_uring_enter.
     for (;;) { // GCOVR_EXCL_LINE
         int ret = evio_uring_enter(iou->fd, n, n, IORING_ENTER_GETEVENTS,
                                    &loop->sigmask, sizeof(loop->sigmask));
@@ -114,7 +112,6 @@ static void evio_uring_submit_and_wait(evio_loop *loop)
             EVIO_ABORT("io_uring_enter() failed, error %d: %s\n", err, EVIO_STRERROR(err));
         }
         if (__evio_unlikely((uint32_t)ret != n)) {
-            // This can happen if the kernel is buggy or we miscounted.
             EVIO_ABORT("io_uring_enter() failed, result %d/%u\n", ret, n);
         }
         // GCOVR_EXCL_STOP
@@ -230,8 +227,6 @@ void evio_uring_flush(evio_loop *loop)
             }
         }
 
-        // This defensive check is for a case that is not expected to happen in practice,
-        // where the completion queue loop runs but processes no events.
         if (*iou->cqhead != head) { // GCOVR_EXCL_LINE
             evio_uring_store(iou->cqhead, head);
         }
@@ -257,9 +252,6 @@ evio_uring *evio_uring_new(void)
 #endif
 
     int fd = evio_uring_setup(EVIO_URING_EVENTS, &params);
-
-    // This block is a fallback for older kernels that don't support the newer
-    // io_uring feature flags. It's untestable in a single environment.
     // GCOVR_EXCL_START
     if (__evio_unlikely(fd < 0)) {
         int err = fd == -1 ? errno : -fd;
@@ -281,7 +273,6 @@ evio_uring *evio_uring_new(void)
                               IORING_FEAT_NODROP |
                               IORING_FEAT_SUBMIT_STABLE |
                               IORING_FEAT_RSRC_TAGS;
-
     // GCOVR_EXCL_START
     if (__evio_unlikely((~params.features) & features)) {
         close(fd);
