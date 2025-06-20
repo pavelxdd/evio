@@ -61,24 +61,12 @@ evio_uring *evio_uring_new(void)
 }
 
 static inline __evio_nonnull(1)
-void evio_uring_free(evio_uring *iou)
-{
-    (void)iou;
-}
+void evio_uring_free(evio_uring *iou) {}
 
 static inline __evio_nonnull(1, 4)
-void evio_uring_ctl(evio_loop *loop, int op, int fd, const struct epoll_event *ev)
-{
-    (void)loop;
-    (void)op;
-    (void)fd;
-    (void)ev;
-}
+void evio_uring_ctl(evio_loop *loop, int op, int fd, const struct epoll_event *ev) {}
 
 static inline __evio_nonnull(1)
-void evio_uring_flush(evio_loop *loop)
-{
-    (void)loop;
-}
+void evio_uring_flush(evio_loop *loop) {}
 
 #endif // EVIO_IO_URING

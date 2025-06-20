@@ -10,8 +10,6 @@
  */
 static void *evio_default_realloc(void *ctx, void *ptr, size_t size)
 {
-    (void)ctx;
-
     if (size) {
         return realloc(ptr, size);
     }

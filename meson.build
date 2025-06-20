@@ -144,6 +144,7 @@ libevio = library('evio', evio_sources,
     gnu_symbol_visibility: 'hidden',
     c_args: [
         '-I' + current_build_dir,
+        '-Wno-unused-parameter',
     ],
     install: true
 )

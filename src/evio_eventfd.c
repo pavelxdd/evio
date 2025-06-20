@@ -86,9 +86,6 @@ void evio_eventfd_write(evio_loop *loop)
 
 void evio_eventfd_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    (void)base;
-    (void)emask;
-
     EVIO_ASSERT(base == &loop->event.base);
 
     atomic_store_explicit(&loop->event_pending.value, 0, memory_order_release);
