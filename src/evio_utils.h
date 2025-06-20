@@ -64,7 +64,7 @@ void evio_set_abort(evio_abort_cb cb, void *ctx);
  * @param[out] ctx If not NULL, the user-defined context pointer is stored here.
  * @return The current abort handler callback, or NULL if not set.
  */
-__evio_public __evio_nodiscard __evio_returns_nonnull
+__evio_public __evio_nodiscard
 evio_abort_cb evio_get_abort(void **ctx);
 
 /**
@@ -94,7 +94,7 @@ void evio_set_abort_func(void (*func)(void));
  * @brief Gets the current program termination function.
  * @return The function pointer that will be called to terminate the program.
  */
-__evio_public __evio_nodiscard
+__evio_public __evio_nodiscard __evio_returns_nonnull
 void (*evio_get_abort_func(void))(void);
 
 #ifndef EVIO_STRERROR_SIZE

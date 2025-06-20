@@ -160,6 +160,18 @@ jobs:
     - run: meson compile -Cbuild -v
     - run: meson test -Cbuild -v
 
+  sanitizers:
+    runs-on: ubuntu-latest
+    env:
+      ASAN_OPTIONS: allocator_may_return_null=1
+    steps:
+    - uses: actions/checkout@main
+    - run: sudo apt-get update
+    - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev
+    - run: meson setup build -Dbuildtype=debug -Dtests=true -Db_sanitize=address,undefined
+    - run: meson compile -Cbuild -v
+    - run: meson test -Cbuild -v
+
   coverage:
     runs-on: ubuntu-latest
     steps:
