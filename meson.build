@@ -282,6 +282,7 @@ if get_option('benchmarks')
         'signal',
         'async',
         'idle',
+        'churn',
     ]
 
     foreach name : benchmarks

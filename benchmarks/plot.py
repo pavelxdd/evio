@@ -79,7 +79,7 @@ def plot_results(results, versions, output_file):
         libs = sorted(list(results[category].keys()))
         values = [results[category][lib] for lib in libs]
 
-        bars = ax.bar(libs, values, color=['#1f77b4', '#ff7f0e', '#2ca02c'])
+        bars = ax.bar(libs, values, color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'])
         ax.set_title(category.replace('_', ' ').title())
         ax.set_ylabel('Time (ns/op)')
 
