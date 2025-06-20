@@ -29,8 +29,6 @@ static void *thread_func(void *arg)
 // This callback is invoked in the main loop's thread when the async event is received.
 static void async_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    (void)base;
-    (void)emask;
     printf("[Main] Async event received. Stopping loop.\n");
     evio_break(loop, EVIO_BREAK_ALL);
 }

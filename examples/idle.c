@@ -13,9 +13,6 @@ typedef struct {
 // and will repeatedly call the idle callback.
 static void idle_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    (void)base;
-    (void)emask;
-
     // Retrieve our data from the watcher.
     idle_data *data = base->data;
     data->count++;

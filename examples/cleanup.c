@@ -6,8 +6,6 @@
 // Cleanup watchers run just before the event loop is freed.
 static void cleanup_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    (void)loop;
-    (void)emask;
     // Retrieve user data to be cleaned up.
     char *my_data = base->data;
     printf("Cleanup watcher called. Freeing data: '%s'\n", my_data);

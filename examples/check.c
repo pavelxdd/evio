@@ -9,8 +9,6 @@ static int check_count = 0;
 // events for that iteration have been processed.
 static void check_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    (void)base;
-    (void)emask;
     check_count++;
     printf("Check watcher called (iteration: %d).\n", check_count);
 

@@ -7,8 +7,6 @@
 // This is the callback for our evio_once watcher.
 static void once_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    (void)base;
-
     if (emask & EVIO_TIMER) {
         printf("Once watcher triggered by TIMEOUT.\n");
     }

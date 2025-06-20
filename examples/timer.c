@@ -11,7 +11,6 @@ typedef struct {
 // This callback is invoked when the timer expires.
 static void timer_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    (void)emask;
     // The base pointer can be safely cast to the specific watcher type.
     evio_timer *w = (evio_timer *)base;
 

@@ -7,7 +7,6 @@
 // This callback is invoked when the pipe becomes readable.
 static void poll_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    (void)emask;
     evio_poll *w = (evio_poll *)base;
     char buf[16];
 

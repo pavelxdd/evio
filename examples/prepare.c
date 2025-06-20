@@ -9,8 +9,6 @@ static int prepare_count = 0;
 // right before the loop blocks to wait for I/O events.
 static void prepare_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    (void)base;
-    (void)emask;
     prepare_count++;
     printf("Prepare watcher called (iteration: %d).\n", prepare_count);
 

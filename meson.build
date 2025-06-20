@@ -247,6 +247,7 @@ if get_option('examples')
             link_with: libevio,
             c_args: [
                 '-I' + current_build_dir,
+                '-Wno-unused-parameter',
             ],
             include_directories: [
                 include_directories('src'),

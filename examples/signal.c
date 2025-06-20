@@ -6,8 +6,6 @@
 // This callback is invoked when a signal is caught.
 static void signal_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    (void)base;
-    (void)emask;
     printf("\nCaught SIGINT, stopping loop.\n");
     // This will cause evio_run() to return after the current iteration.
     evio_break(loop, EVIO_BREAK_ALL);
