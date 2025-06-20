@@ -18,8 +18,9 @@
 #include <stdbool.h>
 #include <stdalign.h>
 #include <stdatomic.h>
-#include <signal.h>
 #include <assert.h>
+#include <signal.h>
+#include <time.h>
 
 // IWYU pragma: end_exports
 

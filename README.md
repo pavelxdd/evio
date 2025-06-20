@@ -98,7 +98,6 @@ The `evio` loop processes events in a well-defined order during each iteration:
 Here is a minimal example demonstrating a repeating timer and a signal handler.
 
 ```c
-#include <stdio.h>
 #include <evio/evio.h>
 
 // A struct to hold our user data.

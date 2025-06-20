@@ -84,6 +84,22 @@ __evio_public __evio_nonnull(1) __evio_nodiscard
 void *evio_get_userdata(const evio_loop *loop);
 
 /**
+ * @brief Sets the loop's clock source ID.
+ * @param loop The event loop.
+ * @param clock_id The new `clockid_t` to use (e.g., `CLOCK_MONOTONIC`).
+ */
+__evio_public __evio_nonnull(1)
+void evio_set_clockid(evio_loop *loop, clockid_t clock_id);
+
+/**
+ * @brief Gets the loop's current clock source ID.
+ * @param loop The event loop.
+ * @return The `clockid_t` for the clock source being used.
+ */
+__evio_public __evio_nonnull(1) __evio_nodiscard
+clockid_t evio_get_clockid(const evio_loop *loop);
+
+/**
  * @brief Starts the event loop.
  * The loop runs until it is stopped via `evio_break` or has no active watchers
  * with reference counts.

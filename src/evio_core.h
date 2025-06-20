@@ -16,7 +16,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
-#include <time.h>
 
 #include "evio.h"
 #include "evio_alloc.h"

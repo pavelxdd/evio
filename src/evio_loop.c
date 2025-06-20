@@ -178,6 +178,17 @@ void *evio_get_userdata(const evio_loop *loop)
     return loop->data;
 }
 
+void evio_set_clockid(evio_loop *loop, clockid_t clock_id)
+{
+    loop->clock_id = clock_id;
+    loop->time = evio_clock_gettime(loop);
+}
+
+clockid_t evio_get_clockid(const evio_loop *loop)
+{
+    return loop->clock_id;
+}
+
 int evio_run(evio_loop *loop, int flags)
 {
     int done = loop->done;

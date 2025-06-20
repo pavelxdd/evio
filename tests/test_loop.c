@@ -87,6 +87,47 @@ TEST(test_evio_userdata)
     evio_loop_free(loop);
 }
 
+TEST(test_evio_clockid)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    for (int i = 0; i < 2; ++i) {
+        // Get default clock and check it's one of the expected values
+        clockid_t old_clock = evio_get_clockid(loop);
+        // GCOVR_EXCL_START
+        assert_true(old_clock == CLOCK_MONOTONIC ||
+                    old_clock == CLOCK_MONOTONIC_COARSE);
+        // GCOVR_EXCL_STOP
+
+        // Determine the alternative clock to switch to
+        clockid_t new_clock = (old_clock == CLOCK_MONOTONIC)
+                              ? CLOCK_MONOTONIC_COARSE
+                              : CLOCK_MONOTONIC;
+
+        struct timespec ts;
+        // GCOVR_EXCL_START
+        if (clock_getres(new_clock, &ts) != 0) {
+            print_message(" -> Skipping clock switch test, clock_id %d not available\n", new_clock);
+            continue;
+        }
+        // GCOVR_EXCL_STOP
+
+        evio_set_clockid(loop, new_clock);
+        assert_int_equal(evio_get_clockid(loop), new_clock);
+
+        // Also check that time updates with the new clock
+        evio_time time1 = evio_get_time(loop);
+        // Sleep for a short duration to ensure the clock ticks.
+        usleep(20000); // 20ms
+        evio_update_time(loop);
+        evio_time time2 = evio_get_time(loop);
+        assert_true(time2 > time1);
+    }
+
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_time_update)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);

@@ -2,13 +2,8 @@
 
 // IWYU pragma: begin_exports
 
-#include <stddef.h>
 #include <stdlib.h>
-#include <stdarg.h>
-#include <stdint.h>
-#include <stdbool.h>
 #include <string.h>
-#include <assert.h>
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
