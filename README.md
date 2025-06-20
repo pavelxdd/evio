@@ -43,17 +43,19 @@ The `evio_loop` is the heart of the library. It continuously monitors for events
 
 Watchers are data structures that you initialize and register with the event loop to be notified of specific events. Each watcher has a corresponding callback function that the loop executes when the event occurs.
 
-The main watcher types are:
+The main watcher types are summarized below:
 
-- **`evio_poll`**: Monitors a file descriptor for readiness (e.g., a socket is readable or writable). It is the foundation for I/O operations.
-- **`evio_timer`**: Fires a callback after a specified amount of time. It can be configured as a one-shot or repeating timer.
-- **`evio_signal`**: Catches POSIX signals (e.g., `SIGINT`, `SIGHUP`) and invokes a callback.
-- **`evio_async`**: Provides a thread-safe mechanism to wake up the event loop from another thread.
-- **`evio_prepare`**: Runs a callback before the loop polls for I/O events. These are useful for setting up state before blocking.
-- **`evio_check`**: Runs a callback after the loop has polled for I/O events. These are useful for acting on state changes made in I/O callbacks.
-- **`evio_idle`**: Runs a callback when the loop has no pending events and is about to idle. Ideal for low-priority background tasks.
-- **`evio_cleanup`**: Runs a callback just before the loop is freed via `evio_loop_free()`.
-- **`evio_once`**: A convenient one-shot watcher that combines an `evio_poll` event with a timeout.
+| Watcher Type      | Triggers On                               | Primary Use Case                       |
+|-------------------|-------------------------------------------|----------------------------------------|
+| `evio_poll`       | I/O readiness on a file descriptor.       | Network sockets, pipes.                |
+| `evio_timer`      | A specified time delay has passed.        | Timeouts, periodic tasks.              |
+| `evio_signal`     | A POSIX signal is received.               | Graceful shutdown (e.g., on SIGINT).   |
+| `evio_async`      | A manual trigger from another thread.     | Inter-thread communication.            |
+| `evio_idle`       | The loop has no other pending events.     | Low-priority background tasks.         |
+| `evio_prepare`    | Before the loop blocks for I/O.           | Pre-blocking setup.                    |
+| `evio_check`      | After the loop has processed I/O.         | Post-I/O state updates.                |
+| `evio_cleanup`    | Just before the event loop is freed.      | Guaranteed resource cleanup.           |
+| `evio_once`       | The first of an I/O event or a timeout.   | I/O operations with a deadline.        |
 
 ### Manual Event Injection
 
@@ -63,10 +65,6 @@ The main watcher types are:
 - `evio_feed_fd_event(loop, fd, emask)`: Queues an I/O event for all watchers on a given file descriptor.
 - `evio_feed_fd_error(loop, fd)`: Queues an I/O error for all watchers on a given file descriptor.
 - `evio_feed_signal(loop, signum)`: Simulates the delivery of a POSIX signal.
-
-### Re-entrant Event Invocation
-
-The `evio_invoke_pending(loop)` function, which is called internally by `evio_run()`, is re-entrant. If a watcher callback calls `evio_invoke_pending()` again, it will immediately start processing newly queued events before the original call returns. This results in a depth-first event processing order. While this can be a powerful feature for immediate, nested event handling, developers should be mindful that deep recursion can lead to stack exhaustion.
 
 ### Customization
 
@@ -180,6 +178,14 @@ int main(void)
 }
 ```
 
+## Performance
+
+`evio` is designed with performance as a primary goal.
+
+For I/O-heavy applications with a high rate of connection turnover (high "churn"), `evio` provides a significant optimization via the `EVIO_FLAG_URING` flag passed to `evio_loop_new()`. When enabled on a supported Linux system, this flag allows `evio` to use the `io_uring` interface to batch and asynchronously submit `epoll_ctl` calls, which can dramatically reduce syscall overhead compared to traditional event loops.
+
+The `benchmarks/` directory contains a suite of performance tests that compare `evio` (both with and without the `io_uring` optimization) against other popular libraries like `libev` and `libuv`. These can be built and run using the `benchmarks` meson option.
+
 ## File Structure
 
 The `evio` library is organized into a modular structure for clarity and maintainability. It distinguishes between public headers, which form the API, and private headers, which are for internal use.
@@ -201,6 +207,10 @@ The only correct and safe way to use `evio` in a multi-process (pre-fork) server
 2. **Child Process**: Each child process must create its own, new `evio_loop` instance after the `fork()` call. It can then add the inherited listening sockets and other file descriptors to this new loop.
 
 This model ensures that each process has a completely independent and valid event loop, avoiding state corruption and unpredictable behavior. Do **not** attempt to "re-initialize" a loop in a child process.
+
+### Re-entrant Event Invocation
+
+The `evio_invoke_pending(loop)` function, which is called internally by `evio_run()`, is re-entrant. If a watcher callback calls `evio_invoke_pending()` again, it will immediately start processing newly queued events before the original call returns. This results in a depth-first event processing order. While this can be a powerful feature for immediate, nested event handling, developers should be mindful that deep recursion can lead to stack exhaustion.
 
 ## License
 
