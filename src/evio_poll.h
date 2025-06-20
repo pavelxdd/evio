@@ -4,9 +4,9 @@
  * @file evio_poll.h
  * @brief An I/O watcher for monitoring file descriptor readiness.
  *
- * This is the core mechanism for integrating non-blocking I/O operations with
- * the event loop. The implementation is backed by the system's `epoll`
- * interface.
+ * This is the core mechanism for integrating non-blocking I/O operations, such
+ * as network sockets and pipes, with the event loop. The implementation is
+ * backed by the system's `epoll` interface.
  */
 
 #include "evio.h"

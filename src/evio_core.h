@@ -68,33 +68,33 @@ typedef struct {
     struct sigaction sa_old;    /**< The original signal action. */
 } evio_sig;
 
-/** @brief The event loop state. */
+/** @brief The internal state of an event loop. */
 struct evio_loop {
-    evio_uring *iou;            /**< Optional io_uring context. */
+    evio_uring *iou;            /**< Optional io_uring context for batched epoll_ctl. */
     size_t iou_count;           /**< Number of pending io_uring operations. */
 
     void *data;                 /**< User-assignable data pointer. */
-    size_t refcount;            /**< Active watcher reference count. */
+    size_t refcount;            /**< Active watcher reference count. Loop runs if > 0. */
 
     evio_time time;             /**< Cached monotonic time for the current iteration. */
-    clockid_t clock_id;         /**< The monotonic clock source ID. */
+    clockid_t clock_id;         /**< The monotonic clock source ID for time functions. */
 
     int fd;                     /**< The main epoll file descriptor. */
-    int done;                   /**< The loop's break state. */
+    int done;                   /**< The loop's break state (see `EVIO_BREAK_*`). */
     int pending_queue;          /**< The index of the active pending queue (0 or 1). */
 
-    evio_poll event;            /**< The internal eventfd poll watcher. */
+    evio_poll event;            /**< The internal eventfd poll watcher for loop wake-ups. */
 
-    EVIO_ATOMIC(int) eventfd_allow; /**< Flag to allow writing to the eventfd. */
+    EVIO_ATOMIC(int) eventfd_allow; /**< Flag to allow writing to the eventfd (thread-sync). */
     EVIO_ATOMIC(int) event_pending; /**< Flag indicating a pending eventfd notification. */
-    EVIO_ATOMIC(int) async_pending; /**< Flag indicating pending async events. */
-    EVIO_ATOMIC(int) signal_pending;/**< Flag indicating pending signal events. */
+    EVIO_ATOMIC(int) async_pending; /**< Flag indicating at least one async watcher is pending. */
+    EVIO_ATOMIC(int) signal_pending;/**< Flag indicating at least one signal is pending. */
 
-    evio_pending_list pending[2];   /**< Double-buffered queue for pending events. */
+    evio_pending_list pending[2];   /**< Double-buffered queue for pending watcher callbacks. */
 
-    EVIO_LIST(evio_fds) fds;        /**< Array of per-file-descriptor data. */
-    EVIO_LIST(int) fdchanges;       /**< List of fds with pending changes. */
-    EVIO_LIST(int) fderrors;        /**< List of fds with pending errors. */
+    EVIO_LIST(evio_fds) fds;        /**< Sparse array of per-file-descriptor data. */
+    EVIO_LIST(int) fdchanges;       /**< List of fds with pending epoll changes. */
+    EVIO_LIST(int) fderrors;        /**< List of fds that have encountered errors. */
     EVIO_LIST(evio_node) timer;     /**< Min-heap of active timers. */
 
     evio_list idle;             /**< List of active idle watchers. */
@@ -106,7 +106,7 @@ struct evio_loop {
 
     EVIO_LIST(struct epoll_event) events; /**< Buffer for epoll_wait results. */
 
-    sigset_t sigmask;           /**< Signal mask used in epoll_pwait. */
+    sigset_t sigmask;           /**< Signal mask used in epoll_pwait to block signals. */
 };
 
 /**

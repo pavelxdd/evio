@@ -2,11 +2,12 @@
 
 /**
  * @file evio_prepare.h
- * @brief A prepare watcher runs at the beginning of each loop iteration.
+ * @brief A prepare watcher that runs at the beginning of each loop iteration.
  *
- * Its callback is invoked just before the loop blocks to wait for I/O. This
- * allows for setup tasks to be performed at a predictable point before any
- * other event handling in that iteration.
+ * An `evio_prepare` watcher's callback is invoked at the start of each loop
+ * iteration, just before the loop blocks to wait for I/O events. This allows
+ * for setup tasks to be performed at a predictable point before any other event
+ * handling in that iteration.
  */
 
 #include "evio.h"

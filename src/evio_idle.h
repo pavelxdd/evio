@@ -2,16 +2,18 @@
 
 /**
  * @file evio_idle.h
- * @brief An idle watcher is invoked when the event loop has no other events.
+ * @brief An idle watcher invoked when the event loop has no other pending events.
  *
- * Its callback is invoked when the event loop has finished processing all
- * pending events and is about to block waiting for new I/O. This makes it
- * suitable for work that should only run when the application is inactive.
+ * An `evio_idle` watcher's callback is invoked when the event loop has finished
+ * processing all other I/O, timer, and async events in an iteration. This makes
+ * it suitable for low-priority work that should only run when the application
+ * is otherwise inactive. If an idle watcher is the only active watcher in the
+ * loop, it will prevent the loop from blocking and will be called repeatedly.
  */
 
 #include "evio.h"
 
-/** @brief An idle watcher, invoked when the loop has no pending events. */
+/** @brief An idle watcher, invoked when the loop has no other pending events. */
 typedef struct evio_idle {
     EVIO_BASE;
 } evio_idle;

@@ -4,11 +4,11 @@
  * @file evio_signal.h
  * @brief A signal watcher for handling POSIX signals as events.
  *
- * It allows an application to process signals as regular events within the main
- * loop's thread. This is achieved safely by capturing the signal in a minimal
- * handler and using an `eventfd` to delegate the actual processing to a
- * callback, avoiding the restrictions of running code in a signal handler
- * context.
+ * An `evio_signal` watcher allows an application to process signals like `SIGINT`
+ * or `SIGHUP` as regular events within the main loop's thread. This is achieved
+ * safely by capturing the signal in a minimal, async-signal-safe handler and
+ * using an internal `eventfd` to delegate the actual processing to a callback,
+ * avoiding the restrictions of running code in a signal handler context.
  */
 
 #include "evio.h"

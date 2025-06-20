@@ -2,17 +2,19 @@
 
 /**
  * @file evio_check.h
- * @brief A check watcher is invoked after processing I/O in a loop iteration.
+ * @brief A check watcher invoked after I/O and other events in a loop iteration.
  *
- * A check watcher's callback is invoked after the event loop has handled all
- * I/O and other pending events for a given iteration. This provides a clean
- * point to execute logic that needs to react to state changes that may have
- * occurred during the event processing phase of the same loop cycle.
+ * An `evio_check` watcher's callback is invoked after the event loop has
+ * handled all I/O and other pending events for a given iteration. This provides
+ * a clean point to execute logic that needs to react to state changes that may
+ * have occurred during the event processing phase of the same loop cycle. They
+ * run at the end of an iteration, just before the loop decides whether to
+ * continue or terminate.
  */
 
 #include "evio.h"
 
-/** @brief A check watcher, invoked after the I/O polling phase. */
+/** @brief A check watcher, invoked after the main event processing phase. */
 typedef struct evio_check {
     EVIO_BASE;
 } evio_check;

@@ -2,20 +2,21 @@
 
 /**
  * @file evio_once.h
- * @brief A one-shot watcher that triggers on I/O or a timeout.
+ * @brief A convenient one-shot watcher that triggers on I/O or a timeout.
  *
- * This watcher simplifies a common use case by internally combining the
- * functionality of a poll watcher and a timer watcher. It triggers on whichever
- * event occurs first.
+ * This watcher simplifies a common use case by internally combining an
+ * `evio_poll` watcher and an `evio_timer` watcher. It triggers its callback on
+ * whichever event occurs first, and then automatically stops itself. It is
+ * useful for I/O operations that need a deadline.
  */
 
 #include "evio.h"
 
-/** @brief A one-shot watcher that triggers on I/O or a timeout. */
+/** @brief A one-shot watcher that triggers on the first of an I/O event or a timeout. */
 typedef struct evio_once {
     EVIO_BASE;
-    evio_poll io;       /**< The internal poll watcher. */
-    evio_timer tm;      /**< The internal timer watcher. */
+    evio_poll io;       /**< @private The internal poll watcher. */
+    evio_timer tm;      /**< @private The internal timer watcher. */
 } evio_once;
 
 /**

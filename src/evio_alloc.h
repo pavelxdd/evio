@@ -2,14 +2,13 @@
 
 /**
  * @file evio_alloc.h
- * @brief A customizable memory allocator for the evio library.
+ * @brief A customizable, abort-on-failure memory allocator for the evio library.
  *
- * This module provides wrappers (evio_malloc, evio_free, etc.) around a
- * user-provided realloc-like function. It can be backed by a custom
- * implementation, but defaults to standard realloc. A key characteristic of
- * this system is its abort-on-failure policy, which guarantees that successful
- * calls always return valid memory, simplifying error handling throughout the
- * library.
+ * This module provides wrappers (`evio_malloc`, `evio_free`, etc.) around a
+ * user-configurable `realloc`-like function. By default, it uses the standard
+ * library's `realloc`. A key characteristic of this system is its
+ * abort-on-failure policy, which guarantees that successful calls always
+ * return valid memory, simplifying error handling throughout the library.
  */
 
 #include "evio.h"
@@ -17,11 +16,16 @@
 /**
  * @brief A callback function pointer for a custom memory allocator.
  *
- * It should behave like `realloc`. `size = 0` should free the memory.
- * @param ctx The user-defined context pointer.
- * @param ptr The pointer to the memory block to reallocate or free.
- * @param size The new size of the memory block.
- * @return A pointer to the reallocated memory, or NULL if size is 0.
+ * The function must behave like `realloc(ptr, size)`. Specifically:
+ * - If `ptr` is `NULL`, it should allocate a new block of `size` bytes.
+ * - If `size` is `0`, it should free the memory block pointed to by `ptr` and
+ *   return `NULL`.
+ * - Otherwise, it should reallocate the memory block.
+ *
+ * @param ctx The user-defined context pointer provided to `evio_set_allocator`.
+ * @param ptr The pointer to the memory block to reallocate or free. Can be `NULL`.
+ * @param size The new size of the memory block in bytes. Can be `0`.
+ * @return A pointer to the allocated memory, or `NULL` if `size` is `0`.
  */
 typedef void *(*evio_realloc_cb)(void *ctx, void *ptr, size_t size);
 

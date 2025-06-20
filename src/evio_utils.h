@@ -2,9 +2,9 @@
 
 /**
  * @file evio_utils.h
- * @brief A collection of utility functions and macros for the evio library.
+ * @brief A collection of utility functions and macros for the `evio` library.
  *
- * This includes custom assertion and abort handlers, and error string
+ * This includes customizable assertion and abort handlers, and error string
  * formatting.
  */
 
@@ -41,10 +41,11 @@
 /**
  * @brief A callback function pointer for a custom abort handler.
  *
- * The handler can perform cleanup before the program terminates.
- * @param ctx The user-defined context pointer.
- * @return A stream (e.g., `stderr`) for the default abort message to be
- *         written to, or `NULL` to suppress the default message.
+ * The handler is called by `EVIO_ABORT` and can perform cleanup before the
+ * program terminates.
+ * @param ctx The user-defined context pointer passed to `evio_set_abort`.
+ * @return A `FILE*` stream (e.g., `stderr`) to which the default abort message
+ *         will be written. If `NULL`, the default message is suppressed.
  */
 typedef FILE *(*evio_abort_cb)(void *ctx);
 

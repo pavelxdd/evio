@@ -4,8 +4,8 @@
  * @file evio.h
  * @brief The main public header for the `evio` library.
  *
- * An application should include this single file to access all public features.
- * It aggregates all other public headers and defines the core types,
+ * An application should include this single file to access all public API
+ * features. It aggregates all other public headers and defines the core types,
  * enumerations, and base structures that form the foundation of the library.
  */
 
@@ -112,12 +112,17 @@
 
 // IWYU pragma: end_exports
 
-/** @brief A bitmask for watcher events (e.g., EVIO_READ, EVIO_TIMER). */
+/**
+ * @brief A bitmask for watcher events (e.g., `EVIO_READ`, `EVIO_TIMER`).
+ *
+ * This type is used throughout the library in callbacks and watcher setups to
+ * specify which events are being handled or have occurred.
+ */
 typedef uint16_t evio_mask;
 
 /** @brief Event mask values for watchers. */
 enum {
-    EVIO_NONE       = 0x000, /**< No events. */
+    EVIO_NONE       = 0x000, /**< No event. */
     EVIO_READ       = 0x001, /**< Read readiness on a file descriptor. */
     EVIO_WRITE      = 0x002, /**< Write readiness on a file descriptor. */
     EVIO_POLL       = 0x004, /**< A poll event occurred (internal use). */
@@ -125,11 +130,11 @@ enum {
     EVIO_SIGNAL     = 0x010, /**< A signal has been received. */
     EVIO_ASYNC      = 0x020, /**< An async event has been sent. */
     EVIO_IDLE       = 0x040, /**< The loop is idle. */
-    EVIO_PREPARE    = 0x080, /**< Prepare phase event. */
-    EVIO_CHECK      = 0x100, /**< Check phase event. */
-    EVIO_CLEANUP    = 0x200, /**< Cleanup phase event. */
+    EVIO_PREPARE    = 0x080, /**< A prepare phase event. */
+    EVIO_CHECK      = 0x100, /**< A check phase event. */
+    EVIO_CLEANUP    = 0x200, /**< A cleanup phase event. */
     EVIO_ONCE       = 0x400, /**< A one-shot poll or timer event occurred. */
-    EVIO_ERROR      = 0x800, /**< An error occurred. */
+    EVIO_ERROR      = 0x800, /**< An error occurred on a watcher. */
 };
 
 /** @brief Flags for `evio_loop_new` to customize loop creation. */
@@ -197,9 +202,9 @@ typedef uint64_t evio_time;
 /** @brief Converts nanoseconds to seconds. */
 #define EVIO_TIME_TO_SEC(t)      (EVIO_TIME(t) / EVIO_TIME_PER_SEC)
 
-/** @brief Opaque type for the event loop. */
+/** @brief An opaque type representing an event loop instance. */
 typedef struct evio_loop evio_loop;
-/** @brief Opaque type for a watcher's base structure. */
+/** @brief An opaque type representing the base of any watcher. */
 typedef struct evio_base evio_base;
 
 /**

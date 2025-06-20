@@ -2,12 +2,15 @@
 
 /**
  * @file evio_cleanup.h
- * @brief A cleanup watcher is invoked just before the event loop is freed.
+ * @brief A cleanup watcher that runs just before the event loop is freed.
  *
- * A cleanup watcher provides a mechanism for resource deallocation tied to the
- * event loop's lifetime. Its callback is guaranteed to execute immediately
- * before the loop is freed, making it the ideal place to release memory or
- * other resources that were allocated for the duration of the loop's execution.
+ * An `evio_cleanup` watcher provides a mechanism for resource deallocation tied
+ * to the event loop's lifetime. Its callback is guaranteed to execute
+ * immediately before the loop is freed via `evio_loop_free()`, making it the
+ * ideal place to release memory or other resources associated with the loop.
+ *
+ * @note Cleanup watchers do not affect the loop's reference count and thus do
+ * not keep the loop alive on their own.
  */
 
 #include "evio.h"
