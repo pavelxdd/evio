@@ -6,37 +6,37 @@ TEST(test_evio_list_double_start)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare p;
-    evio_prepare_init(&p, generic_cb);
-    evio_prepare_start(loop, &p);
-    evio_prepare_start(loop, &p); // double start
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, generic_cb);
+    evio_prepare_start(loop, &prepare);
+    evio_prepare_start(loop, &prepare); // double start
     assert_int_equal(evio_refcount(loop), 1);
-    evio_prepare_stop(loop, &p);
-    evio_prepare_stop(loop, &p); // double stop
+    evio_prepare_stop(loop, &prepare);
+    evio_prepare_stop(loop, &prepare); // double stop
 
-    evio_check c;
-    evio_check_init(&c, generic_cb);
-    evio_check_start(loop, &c);
-    evio_check_start(loop, &c);
+    evio_check check;
+    evio_check_init(&check, generic_cb);
+    evio_check_start(loop, &check);
+    evio_check_start(loop, &check);
     assert_int_equal(evio_refcount(loop), 1);
-    evio_check_stop(loop, &c);
-    evio_check_stop(loop, &c);
+    evio_check_stop(loop, &check);
+    evio_check_stop(loop, &check);
 
-    evio_idle i;
-    evio_idle_init(&i, generic_cb);
-    evio_idle_start(loop, &i);
-    evio_idle_start(loop, &i);
+    evio_idle idle;
+    evio_idle_init(&idle, generic_cb);
+    evio_idle_start(loop, &idle);
+    evio_idle_start(loop, &idle);
     assert_int_equal(evio_refcount(loop), 1);
-    evio_idle_stop(loop, &i);
-    evio_idle_stop(loop, &i);
+    evio_idle_stop(loop, &idle);
+    evio_idle_stop(loop, &idle);
 
-    evio_cleanup cl;
-    evio_cleanup_init(&cl, generic_cb);
-    evio_cleanup_start(loop, &cl);
-    evio_cleanup_start(loop, &cl);
+    evio_cleanup cleanup;
+    evio_cleanup_init(&cleanup, generic_cb);
+    evio_cleanup_start(loop, &cleanup);
+    evio_cleanup_start(loop, &cleanup);
     // no refcount for cleanup watchers
-    evio_cleanup_stop(loop, &cl);
-    evio_cleanup_stop(loop, &cl);
+    evio_cleanup_stop(loop, &cleanup);
+    evio_cleanup_stop(loop, &cleanup);
 
     evio_loop_free(loop);
 }

@@ -991,18 +991,16 @@ TEST(test_evio_poll_event_with_pending_change)
     evio_loop_free(loop);
 }
 
-static size_t error_cb_called = 0;
-
 static void error_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
     if (emask & EVIO_ERROR) {
-        error_cb_called++;
+        size_t *counter = w->data;
+        ++(*counter);
     }
 }
 
 TEST(test_evio_poll_update_ebadf)
 {
-    error_cb_called = 0;
     reset_cb_state();
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
@@ -1014,6 +1012,9 @@ TEST(test_evio_poll_update_ebadf)
     evio_poll_init(&io, error_cb, fds[0], EVIO_READ);
     evio_poll_start(loop, &io);
 
+    size_t counter = 0;
+    io.data = &counter;
+
     // Close the fd before the change is processed by evio_poll_update
     close(fds[0]);
 
@@ -1023,7 +1024,7 @@ TEST(test_evio_poll_update_ebadf)
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     // evio_queue_fd_errors stops the watcher and queues an error event.
-    assert_int_equal(error_cb_called, 1);
+    assert_int_equal(counter, 1);
     assert_false(io.active);
 
     close(fds[1]);
@@ -1032,7 +1033,6 @@ TEST(test_evio_poll_update_ebadf)
 
 TEST(test_evio_poll_error_cb_no_error)
 {
-    error_cb_called = 0;
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -1044,14 +1044,17 @@ TEST(test_evio_poll_error_cb_no_error)
     evio_poll_init(&io, error_cb, fds[0], EVIO_READ);
     evio_poll_start(loop, &io);
 
+    size_t counter = 0;
+    io.data = &counter;
+
     // Trigger a normal read event
     assert_int_equal(write(fds[1], "x", 1), 1);
 
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     // The callback is called, but the if (emask & EVIO_ERROR) is false.
-    // So error_cb_called should be 0.
-    assert_int_equal(error_cb_called, 0);
+    // So counter should be 0.
+    assert_int_equal(counter, 0);
 
     evio_poll_stop(loop, &io);
     close(fds[0]);
@@ -1105,7 +1108,6 @@ TEST(test_evio_poll_spurious_event)
 
 TEST(test_evio_poll_eexist_mod_fail)
 {
-    error_cb_called = 0;
     reset_cb_state();
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
@@ -1132,6 +1134,9 @@ TEST(test_evio_poll_eexist_mod_fail)
     evio_poll_init(&io2, error_cb, fds[0], EVIO_WRITE);
     evio_poll_start(loop, &io2);
 
+    size_t counter = 0;
+    io2.data = &counter;
+
     // 5. Close the fd before running the loop.
     close(fds[0]);
 
@@ -1143,7 +1148,7 @@ TEST(test_evio_poll_eexist_mod_fail)
     evio_run(loop, EVIO_RUN_NOWAIT);
     evio_invoke_pending(loop);
 
-    assert_int_equal(error_cb_called, 1);
+    assert_int_equal(counter, 1);
     assert_false(io2.active);
 
     close(fds[1]);
@@ -1152,7 +1157,6 @@ TEST(test_evio_poll_eexist_mod_fail)
 
 TEST(test_evio_poll_enoent_add_fail)
 {
-    error_cb_called = 0;
     reset_cb_state();
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
@@ -1164,6 +1168,10 @@ TEST(test_evio_poll_enoent_add_fail)
     evio_poll io;
     evio_poll_init(&io, error_cb, fds[0], EVIO_READ);
     evio_poll_start(loop, &io);
+
+    size_t counter = 0;
+    io.data = &counter;
+
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     // 2. Manually remove the FD from epoll to create a desync.
@@ -1182,7 +1190,7 @@ TEST(test_evio_poll_enoent_add_fail)
     evio_run(loop, EVIO_RUN_NOWAIT);
     evio_invoke_pending(loop);
 
-    assert_int_equal(error_cb_called, 1);
+    assert_int_equal(counter, 1);
     assert_false(io.active);
 
     close(fds[1]);

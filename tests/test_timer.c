@@ -128,9 +128,9 @@ TEST(test_evio_timer_repeat)
     evio_loop_free(loop);
 }
 
-static int run_until_called_or_timeout(evio_loop *loop, int loop_limit, int flags)
+static size_t run_until_called_or_timeout(evio_loop *loop, size_t loop_limit, int flags)
 {
-    int loops = 0;
+    size_t loops = 0;
     while (generic_cb_called == 0 && loops < loop_limit) {
         evio_run(loop, flags);
         loops++;
@@ -200,7 +200,7 @@ TEST(test_evio_timer_again_loop_break)
     evio_timer_start(loop, &tm, EVIO_TIME_FROM_SEC(10));
 
     // The loop should time out.
-    int loops = run_until_called_or_timeout(loop, 5, EVIO_RUN_NOWAIT);
+    size_t loops = run_until_called_or_timeout(loop, 5, EVIO_RUN_NOWAIT);
     assert_int_equal(loops, 5);
     assert_int_equal(generic_cb_called, 0);
 

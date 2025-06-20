@@ -83,21 +83,21 @@ TEST(test_evio_core_requeue)
     reset_cb_state();
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
 
-    evio_prepare p;
-    evio_prepare_init(&p, generic_cb);
-    evio_prepare_start(loop, &p);
+    evio_prepare w;
+    evio_prepare_init(&w, generic_cb);
+    evio_prepare_start(loop, &w);
 
     // Queue event twice for same watcher before invoking
-    evio_feed_event(loop, &p.base, EVIO_PREPARE);
+    evio_feed_event(loop, &w.base, EVIO_PREPARE);
     assert_int_equal(evio_pending_count(loop), 1);
 
-    evio_feed_event(loop, &p.base, EVIO_PREPARE);
+    evio_feed_event(loop, &w.base, EVIO_PREPARE);
     assert_int_equal(evio_pending_count(loop), 1);
 
     evio_invoke_pending(loop);
     assert_int_equal(generic_cb_called, 1);
 
-    evio_prepare_stop(loop, &p);
+    evio_prepare_stop(loop, &w);
     evio_loop_free(loop);
 }
 
@@ -551,36 +551,36 @@ TEST(test_evio_core_asserts_consistency)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare p;
-    evio_prepare_init(&p, generic_cb);
-    evio_prepare_start(loop, &p);
+    evio_prepare w;
+    evio_prepare_init(&w, generic_cb);
+    evio_prepare_start(loop, &w);
 
     // Test evio_queue_event consistency asserts
-    evio_feed_event(loop, &p.base, EVIO_PREPARE);
-    assert_true(p.base.pending > 0);
-    size_t original_pending = p.base.pending;
-    p.base.pending = 999; // Corrupt pending state
-    expect_assert_failure(evio_queue_event(loop, &p.base, EVIO_PREPARE));
-    p.base.pending = original_pending;
-    evio_clear_pending(loop, &p.base);
+    evio_feed_event(loop, &w.base, EVIO_PREPARE);
+    assert_true(w.base.pending > 0);
+    size_t original_pending = w.base.pending;
+    w.base.pending = 999; // Corrupt pending state
+    expect_assert_failure(evio_queue_event(loop, &w.base, EVIO_PREPARE));
+    w.base.pending = original_pending;
+    evio_clear_pending(loop, &w.base);
 
     // Test evio_clear_pending consistency asserts
-    evio_feed_event(loop, &p.base, EVIO_PREPARE);
-    assert_true(p.base.pending > 0);
-    original_pending = p.base.pending;
-    p.base.pending = 999; // Corrupt pending state
-    expect_assert_failure(evio_clear_pending(loop, &p.base));
-    p.base.pending = original_pending;
+    evio_feed_event(loop, &w.base, EVIO_PREPARE);
+    assert_true(w.base.pending > 0);
+    original_pending = w.base.pending;
+    w.base.pending = 999; // Corrupt pending state
+    expect_assert_failure(evio_clear_pending(loop, &w.base));
+    w.base.pending = original_pending;
 
-    evio_pending_list *pending = &loop->pending[(p.base.pending - 1) & 1];
-    size_t index = (p.base.pending - 1) >> 1;
+    evio_pending_list *pending = &loop->pending[(w.base.pending - 1) & 1];
+    size_t index = (w.base.pending - 1) >> 1;
     evio_base *original_base = pending->ptr[index].base;
     pending->ptr[index].base = NULL; // Corrupt base pointer in pending queue
-    expect_assert_failure(evio_clear_pending(loop, &p.base));
+    expect_assert_failure(evio_clear_pending(loop, &w.base));
     pending->ptr[index].base = original_base;
-    evio_clear_pending(loop, &p.base);
+    evio_clear_pending(loop, &w.base);
 
-    evio_prepare_stop(loop, &p);
+    evio_prepare_stop(loop, &w);
     evio_loop_free(loop);
 }
 
@@ -589,14 +589,14 @@ TEST(test_evio_core_asserts_invoke)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare p;
-    evio_prepare_init(&p, generic_cb);
-    evio_prepare_start(loop, &p);
+    evio_prepare w;
+    evio_prepare_init(&w, generic_cb);
+    evio_prepare_start(loop, &w);
 
     // Test evio_invoke_pending consistency assert
-    evio_feed_event(loop, &p.base, EVIO_PREPARE);
-    assert_true(p.base.pending > 0);
-    p.base.pending = 999;
+    evio_feed_event(loop, &w.base, EVIO_PREPARE);
+    assert_true(w.base.pending > 0);
+    w.base.pending = 999;
     expect_assert_failure(evio_invoke_pending(loop));
 
     evio_loop_free(loop);
