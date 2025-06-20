@@ -23,9 +23,6 @@ static size_t timer_cb_called = 0;
 
 static void local_timer_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)loop;
-    (void)w;
-    (void)emask;
     timer_cb_called++;
 }
 

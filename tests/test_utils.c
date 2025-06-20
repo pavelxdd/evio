@@ -131,7 +131,6 @@ TEST(test_evio_get_set_abort_func)
 
 static FILE *null_stream_abort_handler(void *ctx)
 {
-    (void)ctx;
     custom_abort_called++;
     return NULL;
 }

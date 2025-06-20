@@ -153,11 +153,8 @@ static void *eintr_thread_func(void *arg)
     return NULL;
 }
 
-static void sigusr1_handler(int signum)
-{
-    (void)signum;
-    // Do nothing, just to interrupt syscall
-}
+// Do nothing, just to interrupt syscall
+static void sigusr1_handler(int signum) {}
 
 TEST(test_evio_poll_wait_eintr)
 {
@@ -609,8 +606,7 @@ TEST(test_evio_poll_gen_counter_robustness)
 
     // 5. Clean up the pipe from the write in step 2 and reset state.
     char buf[1];
-    ssize_t res = read(fd, buf, sizeof(buf));
-    (void)res;
+    read(fd, buf, sizeof(buf));
     reset_cb_state();
 
     // 6. Change watcher back to only watch for READ. This will increment gen to 3.
@@ -939,8 +935,7 @@ TEST(test_evio_poll_stale_event_gen_mismatch)
 
     // Cleanup
     char buf[1];
-    ssize_t res = read(fd, buf, sizeof(buf)); // consume the data
-    (void)res;
+    read(fd, buf, sizeof(buf)); // consume the data
 
     evio_poll_stop(loop, &io2);
     close(fds[0]);
@@ -997,10 +992,9 @@ TEST(test_evio_poll_event_with_pending_change)
 }
 
 static size_t error_cb_called = 0;
+
 static void error_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)loop;
-    (void)w;
     if (emask & EVIO_ERROR) {
         error_cb_called++;
     }

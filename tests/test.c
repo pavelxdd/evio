@@ -7,8 +7,6 @@ evio_mask generic_cb_emask = 0;
 
 void generic_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)loop;
-    (void)w;
     generic_cb_called++;
     generic_cb_emask = emask;
 }
@@ -17,9 +15,6 @@ size_t generic_cb2_called = 0;
 
 void generic_cb2(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)loop;
-    (void)w;
-    (void)emask;
     generic_cb2_called++;
 }
 
@@ -27,8 +22,6 @@ size_t break_cb_called = 0;
 
 void break_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)w;
-    (void)emask;
     break_cb_called++;
     evio_break(loop, EVIO_BREAK_ALL);
 }
@@ -44,15 +37,9 @@ void reset_cb_state(void)
 // A callback that reads from the fd to clear the event state.
 void read_and_count_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)loop;
-    (void)emask;
-
     char buf[1];
     int fd = ((evio_poll *)w)->fd;
-
-    ssize_t res = read(fd, buf, sizeof(buf));
-    (void)res; // Ignore result, we just want to clear the pipe.
-
+    read(fd, buf, sizeof(buf));
     generic_cb_called++;
 }
 
@@ -61,7 +48,6 @@ size_t custom_abort_called = 0;
 
 FILE *custom_abort_handler(void *ctx)
 {
-    (void)ctx;
     custom_abort_called++;
     longjmp(abort_jmp_buf, 1);
     return NULL; // GCOVR_EXCL_LINE

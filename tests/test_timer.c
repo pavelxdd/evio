@@ -365,9 +365,6 @@ TEST(test_evio_timer_fast_repeat)
 
 static void timer_slow_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)loop;
-    (void)w;
-    (void)emask;
     // Sleep for longer than the repeat interval
     usleep(20000); // 20ms
     generic_cb_called++;

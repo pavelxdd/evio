@@ -157,8 +157,6 @@ static size_t break_one_cb_called = 0;
 
 static void break_one_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)w;
-    (void)emask;
     break_one_cb_called++;
     evio_break(loop, EVIO_BREAK_ONE);
 }
@@ -168,8 +166,6 @@ static evio_idle break_all_watcher;
 
 static void break_all_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)w;
-    (void)emask;
     break_all_cb_called++;
     evio_break(loop, EVIO_BREAK_ALL);
 }
@@ -178,8 +174,6 @@ static size_t nested_run_trigger_cb_called = 0;
 
 static void nested_run_trigger_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)w;
-    (void)emask;
     nested_run_trigger_cb_called++;
 
     // Start the watcher that will break out of all loops. Using an idle watcher
@@ -193,9 +187,8 @@ static void nested_run_trigger_cb(evio_loop *loop, evio_base *w, evio_mask emask
     assert_int_equal(evio_break_state(loop), EVIO_BREAK_ALL);
 }
 
-TEST(test_evio_break)
+TEST(test_evio_break_one)
 {
-    // Part 1: Test EVIO_BREAK_ONE
     break_one_cb_called = 0;
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
@@ -216,11 +209,13 @@ TEST(test_evio_break)
 
     evio_prepare_stop(loop, &prepare_one);
     evio_loop_free(loop);
+}
 
-    // Part 2: Test EVIO_BREAK_ALL with nested loops
+TEST(test_evio_break_all)
+{
     nested_run_trigger_cb_called = 0;
     break_all_cb_called = 0;
-    loop = evio_loop_new(EVIO_FLAG_NONE);
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
     evio_timer tm;
@@ -231,7 +226,7 @@ TEST(test_evio_break)
 
     // This run will enter a nested loop, which will be broken by EVIO_BREAK_ALL,
     // which should propagate and break this outer loop too.
-    active = evio_run(loop, EVIO_RUN_DEFAULT);
+    int active = evio_run(loop, EVIO_RUN_DEFAULT);
 
     assert_int_equal(nested_run_trigger_cb_called, 1);
     assert_int_equal(break_all_cb_called, 1);
@@ -434,7 +429,6 @@ static size_t repeat_cb_called = 0;
 
 static void repeating_timer_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)emask;
     repeat_cb_called++;
 
     if (repeat_cb_called >= 3) {
@@ -467,7 +461,6 @@ static size_t pending_and_no_ref_cb_called = 0;
 
 static void pending_and_no_ref_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)emask;
     pending_and_no_ref_cb_called++;
 
     if (pending_and_no_ref_cb_called == 1) {
@@ -523,7 +516,6 @@ static size_t break_and_pending_cb_called = 0;
 
 static void break_and_pending_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)emask;
     break_and_pending_cb_called++;
 
     // Only do this on the first call to avoid infinite loop in test
@@ -569,8 +561,6 @@ TEST(test_evio_run_return_ref_and_pending)
 
 static void break_extra_flags_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)w;
-    (void)emask;
     generic_cb_called++;
     evio_break(loop, EVIO_BREAK_ONE | 0xff00);
 }
@@ -608,7 +598,6 @@ static size_t level1_sibling_cb_called = 0;
 // Level 1: Queues level 2 event and makes a nested call to invoke_pending.
 static void nested_cb_level1(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)emask;
     level1_cb_called++;
     evio_prepare_stop(loop, (evio_prepare *)w);
     evio_feed_event(loop, &p_level2.base, EVIO_PREPARE);
@@ -617,7 +606,6 @@ static void nested_cb_level1(evio_loop *loop, evio_base *w, evio_mask emask)
 // Sibling to Level 1.
 static void nested_cb_level1_sibling(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)emask;
     evio_prepare_stop(loop, (evio_prepare *)w);
     level1_sibling_cb_called++;
 }
@@ -625,7 +613,6 @@ static void nested_cb_level1_sibling(evio_loop *loop, evio_base *w, evio_mask em
 // Level 2: Queues level 3 event.
 static void nested_cb_level2(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)emask;
     level2_cb_called++;
     evio_prepare_stop(loop, (evio_prepare *)w);
     evio_feed_event(loop, &p_level3.base, EVIO_PREPARE);
@@ -634,7 +621,6 @@ static void nested_cb_level2(evio_loop *loop, evio_base *w, evio_mask emask)
 // Level 3: The innermost callback. It just marks that it was called.
 static void nested_cb_level3(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)emask;
     evio_prepare_stop(loop, (evio_prepare *)w);
     level3_cb_called++;
 }
@@ -740,7 +726,6 @@ static size_t reentrant_cb_called = 0;
 
 static void reentrant_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)emask;
     reentrant_cb_called++;
 
     // Make a nested call. It should be able to process events.
@@ -788,8 +773,6 @@ static int flaw_cb2_called = 0;
 
 static void flaw_cb1(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)w;
-    (void)emask;
     flaw_cb1_called++;
     evio_feed_event(loop, &p_flaw2.base, EVIO_PREPARE);
     // This re-entrant call immediately processes the new events,
@@ -799,8 +782,6 @@ static void flaw_cb1(evio_loop *loop, evio_base *w, evio_mask emask)
 
 static void flaw_cb2(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)w;
-    (void)emask;
     flaw_cb2_called++;
     if (flaw_cb1_called < RECURSION_LIMIT) {
         evio_feed_event(loop, &p_flaw1.base, EVIO_PREPARE);
@@ -843,8 +824,6 @@ static int execution_idx;
 
 static void reentrant_cb_A(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)w;
-    (void)emask;
     execution_order[execution_idx++] = 'A';
 
     // Queue event C
@@ -857,17 +836,11 @@ static void reentrant_cb_A(evio_loop *loop, evio_base *w, evio_mask emask)
 
 static void reentrant_cb_B(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)loop;
-    (void)w;
-    (void)emask;
     execution_order[execution_idx++] = 'B';
 }
 
 static void reentrant_cb_C(evio_loop *loop, evio_base *w, evio_mask emask)
 {
-    (void)loop;
-    (void)w;
-    (void)emask;
     execution_order[execution_idx++] = 'C';
 }
 

@@ -82,11 +82,8 @@ TEST(test_evio_list_resize_assert_zero_size)
 {
     expect_assert_failure({
         size_t total = 0;
-        volatile void *ptr = evio_list_resize(NULL, 0, 1, &total);
-        // GCOVR_EXCL_START
-        (void)ptr;
-        fail();
-        // GCOVR_EXCL_STOP
+        evio_list_resize(NULL, 0, 1, &total);
+        fail(); // GCOVR_EXCL_LINE
     });
 }
 
@@ -94,11 +91,8 @@ TEST(test_evio_list_resize_assert_overflow)
 {
     expect_assert_failure({
         size_t total = 0;
-        volatile void *ptr = evio_list_resize(NULL, 2, (SIZE_MAX / 2) + 1, &total);
-        // GCOVR_EXCL_START
-        (void)ptr;
-        fail();
-        // GCOVR_EXCL_STOP
+        evio_list_resize(NULL, 2, (SIZE_MAX / 2) + 1, &total);
+        fail(); // GCOVR_EXCL_LINE
     });
 }
 
@@ -106,11 +100,8 @@ TEST(test_evio_list_resize_assert_null_ptr)
 {
     expect_assert_failure({
         size_t total = 1;
-        volatile void *ptr = evio_list_resize(NULL, 1, 0, &total);
-        // GCOVR_EXCL_START
-        (void)ptr;
-        fail();
-        // GCOVR_EXCL_STOP
+        evio_list_resize(NULL, 1, 0, &total);
+        fail(); // GCOVR_EXCL_LINE
     });
 }
 

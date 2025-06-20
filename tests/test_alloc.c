@@ -57,7 +57,6 @@ static size_t custom_alloc_count = 0;
 
 static void *custom_realloc(void *ctx, void *ptr, size_t size)
 {
-    (void)ctx;
     custom_alloc_count++;
 
     if (size) {
@@ -132,11 +131,8 @@ TEST(test_evio_malloc_overflow)
     custom_abort_called = 0;
 
     if (setjmp(abort_jmp_buf) == 0) {
-        volatile void *ptr = evio_malloc(PTRDIFF_MAX);
-        // GCOVR_EXCL_START
-        (void)ptr;
-        fail();
-        // GCOVR_EXCL_STOP
+        evio_malloc(PTRDIFF_MAX);
+        fail(); // GCOVR_EXCL_LINE
     }
 
     assert_int_equal(custom_abort_called, 1);
@@ -151,11 +147,8 @@ TEST(test_evio_calloc_overflow_size)
     custom_abort_called = 0;
 
     if (setjmp(abort_jmp_buf) == 0) {
-        volatile void *ptr = evio_calloc(1, PTRDIFF_MAX);
-        // GCOVR_EXCL_START
-        (void)ptr;
-        fail();
-        // GCOVR_EXCL_STOP
+        evio_calloc(1, PTRDIFF_MAX);
+        fail(); // GCOVR_EXCL_LINE
     }
 
     assert_int_equal(custom_abort_called, 1);
@@ -170,11 +163,8 @@ TEST(test_evio_calloc_overflow_mul)
     custom_abort_called = 0;
 
     if (setjmp(abort_jmp_buf) == 0) {
-        volatile void *ptr = evio_calloc(PTRDIFF_MAX, PTRDIFF_MAX);
-        // GCOVR_EXCL_START
-        (void)ptr;
-        fail();
-        // GCOVR_EXCL_STOP
+        evio_calloc(PTRDIFF_MAX, PTRDIFF_MAX);
+        fail(); // GCOVR_EXCL_LINE
     }
 
     assert_int_equal(custom_abort_called, 1);
@@ -189,11 +179,8 @@ TEST(test_evio_realloc_overflow)
     custom_abort_called = 0;
 
     if (setjmp(abort_jmp_buf) == 0) {
-        volatile void *ptr = evio_realloc(NULL, PTRDIFF_MAX);
-        // GCOVR_EXCL_START
-        (void)ptr;
-        fail();
-        // GCOVR_EXCL_STOP
+        evio_realloc(NULL, PTRDIFF_MAX);
+        fail(); // GCOVR_EXCL_LINE
     }
 
     assert_int_equal(custom_abort_called, 1);
@@ -208,11 +195,8 @@ TEST(test_evio_reallocarray_overflow_size)
     custom_abort_called = 0;
 
     if (setjmp(abort_jmp_buf) == 0) {
-        volatile void *ptr = evio_reallocarray(NULL, 1, PTRDIFF_MAX);
-        // GCOVR_EXCL_START
-        (void)ptr;
-        fail();
-        // GCOVR_EXCL_STOP
+        evio_reallocarray(NULL, 1, PTRDIFF_MAX);
+        fail(); // GCOVR_EXCL_LINE
     }
 
     assert_int_equal(custom_abort_called, 1);
@@ -227,11 +211,8 @@ TEST(test_evio_reallocarray_overflow_mul)
     custom_abort_called = 0;
 
     if (setjmp(abort_jmp_buf) == 0) {
-        volatile void *ptr = evio_reallocarray(NULL, PTRDIFF_MAX, PTRDIFF_MAX);
-        // GCOVR_EXCL_START
-        (void)ptr;
-        fail();
-        // GCOVR_EXCL_STOP
+        evio_reallocarray(NULL, PTRDIFF_MAX, PTRDIFF_MAX);
+        fail(); // GCOVR_EXCL_LINE
     }
 
     assert_int_equal(custom_abort_called, 1);
@@ -240,9 +221,6 @@ TEST(test_evio_reallocarray_overflow_mul)
 
 static void *failing_allocator(void *ctx, void *ptr, size_t size)
 {
-    (void)ctx;
-    (void)ptr;
-    (void)size;
     return NULL;
 }
 
@@ -259,11 +237,8 @@ TEST(test_evio_malloc_failing)
 
     custom_abort_called = 0;
     if (setjmp(abort_jmp_buf) == 0) {
-        volatile void *ptr = evio_malloc(1);
-        // GCOVR_EXCL_START
-        (void)ptr;
-        fail();
-        // GCOVR_EXCL_STOP
+        evio_malloc(1);
+        fail(); // GCOVR_EXCL_LINE
     }
     assert_int_equal(custom_abort_called, 1);
 
@@ -284,11 +259,8 @@ TEST(test_evio_calloc_failing)
 
     custom_abort_called = 0;
     if (setjmp(abort_jmp_buf) == 0) {
-        volatile void *ptr = evio_calloc(1, 1);
-        // GCOVR_EXCL_START
-        (void)ptr;
-        fail();
-        // GCOVR_EXCL_STOP
+        evio_calloc(1, 1);
+        fail(); // GCOVR_EXCL_LINE
     }
     assert_int_equal(custom_abort_called, 1);
 
@@ -309,11 +281,8 @@ TEST(test_evio_realloc_failing)
 
     custom_abort_called = 0;
     if (setjmp(abort_jmp_buf) == 0) {
-        volatile void *ptr = evio_realloc(NULL, 1);
-        // GCOVR_EXCL_START
-        (void)ptr;
-        fail();
-        // GCOVR_EXCL_STOP
+        evio_realloc(NULL, 1);
+        fail(); // GCOVR_EXCL_LINE
     }
     assert_int_equal(custom_abort_called, 1);
 
@@ -334,11 +303,8 @@ TEST(test_evio_reallocarray_failing)
 
     custom_abort_called = 0;
     if (setjmp(abort_jmp_buf) == 0) {
-        volatile void *ptr = evio_reallocarray(NULL, 1, 1);
-        // GCOVR_EXCL_START
-        (void)ptr;
-        fail();
-        // GCOVR_EXCL_STOP
+        evio_reallocarray(NULL, 1, 1);
+        fail(); // GCOVR_EXCL_LINE
     }
     assert_int_equal(custom_abort_called, 1);
 

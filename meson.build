@@ -51,6 +51,7 @@ cflags_check = [
     '-Wno-strict-aliasing',
     '-Wno-clobbered',
     '-Wno-format-zero-length',
+    '-Wno-unused-parameter',
     '-Wno-nonnull-compare',
     '-Wno-pedantic',
 ]
@@ -144,7 +145,6 @@ libevio = library('evio', evio_sources,
     gnu_symbol_visibility: 'hidden',
     c_args: [
         '-I' + current_build_dir,
-        '-Wno-unused-parameter',
     ],
     install: true
 )
@@ -191,6 +191,7 @@ if get_option('tests')
     evio_tests = executable('evio_tests', test_sources,
         c_args: [
             '-I' + current_build_dir,
+            '-Wno-unused-result',
             '-DEVIO_TESTING=1',
             '-UNDEBUG',
             '-fno-inline',
@@ -248,7 +249,6 @@ if get_option('examples')
             link_with: libevio,
             c_args: [
                 '-I' + current_build_dir,
-                '-Wno-unused-parameter',
             ],
             include_directories: [
                 include_directories('src'),
@@ -292,7 +292,6 @@ if get_option('benchmarks')
             files('benchmarks' / ('bench_' + name + '.c')) + files('benchmarks/bench.c'),
             c_args: [
                 '-I' + current_build_dir,
-                '-Wno-unused-parameter',
                 '-Wno-unused-function',
             ],
             include_directories: [
