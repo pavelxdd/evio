@@ -215,6 +215,7 @@ if get_option('tests')
             '--leak-check=full',
             '--show-leak-kinds=all',
             '--show-reachable=no',
+            '--show-error-list=yes',
             '--track-fds=yes',
             '--track-origins=yes',
             '--trace-children=yes',
