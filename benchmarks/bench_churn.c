@@ -17,124 +17,128 @@ static void dummy_libev_cb(struct ev_loop *loop, ev_io *w, int revents) {}
 static void dummy_libuv_cb(uv_poll_t *w, int status, int events) {}
 
 // --- evio ---
-static void bench_evio_churn(bool use_uring)
+static void bench_evio_churn(int fds[NUM_WATCHERS], bool use_uring)
 {
     evio_loop *loop = evio_loop_new(use_uring ? EVIO_FLAG_URING : EVIO_FLAG_NONE);
-
-    evio_poll watchers[NUM_WATCHERS];
-    int fds[NUM_WATCHERS];
+    evio_poll io[NUM_WATCHERS];
 
     for (size_t i = 0; i < NUM_WATCHERS; ++i) {
-        fds[i] = socket(AF_UNIX, SOCK_STREAM, 0);
-        evio_poll_init(&watchers[i], dummy_evio_cb, fds[i], EVIO_WRITE);
+        evio_poll_init(&io[i], dummy_evio_cb, fds[i], EVIO_READ | EVIO_WRITE);
     }
 
     uint64_t start = get_time_ns();
     for (size_t i = 0; i < NUM_ITERATIONS; ++i) {
         for (size_t j = 0; j < NUM_WATCHERS; ++j) {
-            evio_poll_start(loop, &watchers[j]);
+            evio_poll_start(loop, &io[j]);
         }
         evio_run(loop, EVIO_RUN_NOWAIT);
 
         for (size_t j = 0; j < NUM_WATCHERS; ++j) {
-            evio_poll_stop(loop, &watchers[j]);
+            evio_poll_stop(loop, &io[j]);
         }
         evio_run(loop, EVIO_RUN_NOWAIT);
     }
     uint64_t end = get_time_ns();
 
-    print_benchmark("poll_churn", use_uring ? "evio-uring" : "evio", end - start, NUM_ITERATIONS * NUM_WATCHERS);
+    const char *name = use_uring ? "evio-uring" : "evio";
+    print_benchmark("poll_churn", name, end - start, NUM_ITERATIONS * NUM_WATCHERS * 2);
 
     evio_loop_free(loop);
-    for (size_t i = 0; i < NUM_WATCHERS; ++i) {
-        close(fds[i]);
-    }
 }
 
 // --- libev ---
-static void bench_libev_churn(void)
+static void bench_libev_churn(int fds[NUM_WATCHERS])
 {
     struct ev_loop *loop = ev_loop_new(0);
-
-    ev_io watchers[NUM_WATCHERS];
-    int fds[NUM_WATCHERS];
+    ev_io io[NUM_WATCHERS];
 
     for (size_t i = 0; i < NUM_WATCHERS; ++i) {
-        fds[i] = socket(AF_UNIX, SOCK_STREAM, 0);
-        ev_io_init(&watchers[i], dummy_libev_cb, fds[i], EV_WRITE);
+        ev_io_init(&io[i], dummy_libev_cb, fds[i], EV_READ | EV_WRITE);
     }
 
     uint64_t start = get_time_ns();
     for (size_t i = 0; i < NUM_ITERATIONS; ++i) {
         for (size_t j = 0; j < NUM_WATCHERS; ++j) {
-            ev_io_start(loop, &watchers[j]);
+            ev_io_start(loop, &io[j]);
         }
         ev_run(loop, EVRUN_NOWAIT);
 
         for (size_t j = 0; j < NUM_WATCHERS; ++j) {
-            ev_io_stop(loop, &watchers[j]);
+            ev_io_stop(loop, &io[j]);
         }
         ev_run(loop, EVRUN_NOWAIT);
     }
     uint64_t end = get_time_ns();
 
-    print_benchmark("poll_churn", "libev", end - start, NUM_ITERATIONS * NUM_WATCHERS);
+    print_benchmark("poll_churn", "libev", end - start, NUM_ITERATIONS * NUM_WATCHERS * 2);
 
     ev_loop_destroy(loop);
-    for (size_t i = 0; i < NUM_WATCHERS; ++i) {
-        close(fds[i]);
-    }
 }
 
 // --- libuv ---
-static void bench_libuv_churn(void)
+static void bench_libuv_churn(int fds[NUM_WATCHERS])
 {
     uv_loop_t *loop = uv_loop_new();
-
-    uv_poll_t watchers[NUM_WATCHERS];
-    int fds[NUM_WATCHERS];
+    uv_poll_t io[NUM_WATCHERS];
 
     for (size_t i = 0; i < NUM_WATCHERS; ++i) {
-        fds[i] = socket(AF_UNIX, SOCK_STREAM, 0);
-        uv_poll_init(loop, &watchers[i], fds[i]);
+        uv_poll_init(loop, &io[i], fds[i]);
     }
 
     uint64_t start = get_time_ns();
     for (size_t i = 0; i < NUM_ITERATIONS; ++i) {
         for (size_t j = 0; j < NUM_WATCHERS; ++j) {
-            uv_poll_start(&watchers[j], UV_WRITABLE, dummy_libuv_cb);
+            uv_poll_start(&io[j], UV_READABLE | UV_WRITABLE, dummy_libuv_cb);
         }
         uv_run(loop, UV_RUN_NOWAIT);
 
         for (size_t j = 0; j < NUM_WATCHERS; ++j) {
-            uv_poll_stop(&watchers[j]);
+            uv_poll_stop(&io[j]);
         }
         uv_run(loop, UV_RUN_NOWAIT);
     }
     uint64_t end = get_time_ns();
 
-    print_benchmark("poll_churn", "libuv", end - start, NUM_ITERATIONS * NUM_WATCHERS);
+    print_benchmark("poll_churn", "libuv", end - start, NUM_ITERATIONS * NUM_WATCHERS * 2);
 
     for (size_t i = 0; i < NUM_WATCHERS; ++i) {
-        if (!uv_is_closing((uv_handle_t *)&watchers[i])) {
-            uv_close((uv_handle_t *)&watchers[i], NULL);
+        if (!uv_is_closing((uv_handle_t *)&io[i])) {
+            uv_close((uv_handle_t *)&io[i], NULL);
         }
     }
     uv_run(loop, UV_RUN_NOWAIT);
 
     uv_loop_close(loop);
     free(loop);
-    for (size_t i = 0; i < NUM_WATCHERS; ++i) {
-        close(fds[i]);
-    }
 }
 
 int main(void)
 {
     print_versions();
-    bench_evio_churn(false);
-    bench_evio_churn(true);
-    bench_libev_churn();
-    bench_libuv_churn();
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
+#endif
+
+    int fds[NUM_WATCHERS];
+    for (size_t i = 0; i < NUM_WATCHERS; ++i) {
+        fds[i] = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    }
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
+    bench_evio_churn(fds, false);
+    bench_evio_churn(fds, true);
+
+    bench_libev_churn(fds);
+    bench_libuv_churn(fds);
+
+    for (size_t i = 0; i < NUM_WATCHERS; ++i) {
+        close(fds[i]);
+    }
+
     return EXIT_SUCCESS;
 }
