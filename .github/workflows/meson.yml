@@ -172,6 +172,24 @@ jobs:
     - run: meson compile -Cbuild -v
     - run: meson test -Cbuild -v
 
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@main
+    - run: sudo apt-get update
+    - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev
+    - run: meson setup build -Dbuildtype=debug -Danalyzer=true -Dexamples=true
+    - run: meson compile -Cbuild -v
+
+  benchmarks:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@main
+    - run: sudo apt-get update
+    - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev libuv1-dev libev-dev
+    - run: meson setup build -Dbuildtype=debug -Danalyzer=true -Dbenchmarks=true
+    - run: meson compile -Cbuild -v
+
   coverage:
     runs-on: ubuntu-latest
     steps:
