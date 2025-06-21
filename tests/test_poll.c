@@ -74,6 +74,113 @@ TEST(test_evio_poll)
     evio_loop_free(loop);
 }
 
+TEST(test_evio_poll_update_force_poll_flag)
+{
+    generic_cb_data data1 = { 0 };
+    generic_cb_data data2 = { 0 };
+
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+
+    evio_poll io1;
+    evio_poll_init(&io1, generic_cb, fds[0], EVIO_READ);
+    io1.data = &data1;
+
+    evio_poll io2;
+    evio_poll_init(&io2, generic_cb, fds[0], EVIO_READ);
+    io2.data = &data2;
+
+    // Start one watcher and run the loop to establish a baseline.
+    evio_poll_start(loop, &io1);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(loop->fds.ptr[fds[0]].emask, EVIO_READ);
+
+    // Start a second watcher on the same fd with the same mask.
+    // This queues a change with the EVIO_POLL flag set.
+    evio_poll_start(loop, &io2);
+    assert_int_equal(loop->fdchanges.count, 1);
+
+    // Run the loop. evio_poll_update will be called.
+    // The new mask will equal the old mask, but the EVIO_POLL flag will be set,
+    // causing the optimization to be skipped and covering the target branch.
+    evio_run(loop, EVIO_RUN_NOWAIT);
+
+    // Both watchers should be active and working.
+    assert_int_equal(write(fds[1], "x", 1), 1);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data1.called, 1);
+    assert_int_equal(data2.called, 1);
+
+    evio_poll_stop(loop, &io1);
+    evio_poll_stop(loop, &io2);
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_poll_update_assert_fd_bounds)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+
+    evio_poll io;
+    evio_poll_init(&io, dummy_cb, fds[0], EVIO_READ);
+    evio_poll_start(loop, &io); // This queues a change for fds[0]
+    assert_int_equal(loop->fdchanges.count, 1);
+
+    // Test fd < 0
+    int original_fd = loop->fdchanges.ptr[0];
+    loop->fdchanges.ptr[0] = -1;
+    expect_assert_failure(evio_poll_update(loop));
+
+    // Restore for next test. After longjmp, fdchanges.count is still 1.
+    loop->fdchanges.ptr[0] = original_fd;
+
+    // Test fd >= loop->fds.count
+    loop->fdchanges.ptr[0] = loop->fds.count;
+    expect_assert_failure(evio_poll_update(loop));
+
+    // Restore and cleanup
+    loop->fdchanges.ptr[0] = original_fd;
+    evio_poll_stop(loop, &io);
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_poll_update_assert_backpointer)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+
+    evio_poll io;
+    evio_poll_init(&io, dummy_cb, fds[0], EVIO_READ);
+    evio_poll_start(loop, &io); // This queues a change for fds[0]
+
+    assert_int_equal(loop->fdchanges.count, 1);
+    assert_int_equal(loop->fds.ptr[io.fd].changes, 1);
+
+    // Corrupt backpointer
+    loop->fds.ptr[io.fd].changes = 99;
+    expect_assert_failure(evio_poll_update(loop));
+
+    // Restore and cleanup
+    loop->fds.ptr[io.fd].changes = 1;
+    evio_poll_stop(loop, &io);
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_poll_change)
 {
     generic_cb_data data = { 0 };
@@ -1166,6 +1273,51 @@ TEST(test_evio_poll_spurious_event)
     assert_int_equal(loop->fds.ptr[fds[0]].emask, EVIO_READ);
 
     evio_poll_stop(loop, &io);
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_poll_spurious_event_del)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+    int fd = fds[0];
+
+    evio_poll io;
+    evio_poll_init(&io, generic_cb, fd, EVIO_READ);
+    io.data = &data;
+    evio_poll_start(loop, &io);
+
+    // Register with epoll
+    evio_run(loop, EVIO_RUN_NOWAIT);
+
+    // Manually desync epoll state to trigger spurious event logic
+    struct epoll_event ev = { .events = EPOLLIN | EPOLLOUT };
+    ev.data.u64 = ((uint64_t)fd) | ((uint64_t)loop->fds.ptr[fd].gen << 32);
+    assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_MOD, fd, &ev), 0);
+
+    // Manually set the library's internal mask for this fd to 0. This is a
+    // white-box test to simulate a state where all watchers are gone but the
+    // kernel registration is stale.
+    loop->fds.ptr[fd].emask = 0;
+
+    // Run the loop. It will receive the spurious EPOLLOUT event.
+    // The handler will see fds->emask is 0 and choose op=EPOLL_CTL_DEL,
+    // covering the target branch.
+    evio_run(loop, EVIO_RUN_NOWAIT);
+
+    // No callback should be called because the watcher was conceptually stopped.
+    assert_int_equal(data.called, 0);
+
+    // The watcher is still technically active in the fds->list, so stop it
+    // to clean up correctly.
+    evio_poll_stop(loop, &io);
+
     close(fds[0]);
     close(fds[1]);
     evio_loop_free(loop);

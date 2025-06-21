@@ -102,6 +102,38 @@ TEST(test_evio_eventfd_eagain)
     evio_loop_free(loop);
 }
 
+TEST(test_evio_eventfd_write_ebadf)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+    evio_eventfd_init(loop);
+
+    int event_fd = loop->event.fd;
+    assert_true(event_fd >= 0);
+
+    // Open a read-only fd to dup over the eventfd
+    int read_only_fd = open("/dev/null", O_RDONLY);
+    assert_true(read_only_fd >= 0);
+
+    // Duplicate it over the eventfd. Now event_fd refers to a read-only file.
+    // This will close the original eventfd.
+    int ret = dup2(read_only_fd, event_fd);
+    assert_int_equal(ret, event_fd);
+    close(read_only_fd); // close the original /dev/null fd, we don't need it.
+
+    // Allow eventfd writes to proceed to evio_eventfd_notify
+    atomic_store_explicit(&loop->eventfd_allow.value, 1, memory_order_relaxed);
+
+    // This will call notify with an fd that is not open for writing.
+    // write() will fail with EBADF.
+    // `if (err != EAGAIN)` will be true, and the outer loop will break.
+    evio_eventfd_write(loop);
+
+    // The loop's event.fd now points to the /dev/null descriptor.
+    // evio_loop_free will close it, which is correct.
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_eventfd_write_pending)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);

@@ -21,7 +21,47 @@ static void read_and_count_cb(evio_loop *loop, evio_base *base, evio_mask emask)
     generic_cb(loop, base, emask);
 }
 
-TEST(test_evio_large_timeout)
+TEST(test_evio_timeout_huge_ns_diff)
+{
+    generic_cb_data data1 = { 0 };
+    generic_cb_data data2 = { 0 };
+
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+
+    evio_timer tm;
+    evio_timer_init(&tm, generic_cb, 0);
+    tm.data = &data1;
+    evio_timer_start(loop, &tm, 1); // Start with a dummy timeout
+
+    evio_poll io;
+    evio_poll_init(&io, read_and_count_cb, fds[0], EVIO_READ);
+    io.data = &data2;
+    evio_poll_start(loop, &io);
+
+    // Manually set timer expiration to the maximum to create a huge nanosecond
+    // difference. Note this test may be flaky if system uptime is very small.
+    loop->timer.ptr[0].time = EVIO_TIME_MAX;
+
+    assert_int_equal(write(fds[1], "x", 1), 1);
+    evio_run(loop, EVIO_RUN_ONCE); // This will call evio_timeout
+
+    // Poll watcher fired, timer did not.
+    assert_int_equal(data1.called, 0);
+    assert_int_equal(data2.called, 1);
+
+    // Cleanup
+    evio_timer_stop(loop, &tm);
+    evio_poll_stop(loop, &io);
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_timeout_huge_ms_diff)
 {
     generic_cb_data data1 = { 0 };
     generic_cb_data data2 = { 0 };

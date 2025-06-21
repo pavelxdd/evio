@@ -28,11 +28,9 @@ static void evio_signal_cb(int signum)
 
     atomic_store_explicit(&sig->status.value, 1, memory_order_release);
 
-    // GCOVR_EXCL_START
     if (!atomic_exchange_explicit(&loop->signal_pending.value, 1, memory_order_acq_rel)) {
         evio_eventfd_write(loop);
     }
-    // GCOVR_EXCL_STOP
 }
 
 void evio_signal_queue_events(evio_loop *loop, int signum)

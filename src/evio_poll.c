@@ -97,15 +97,13 @@ void evio_poll_update(evio_loop *loop)
     struct epoll_event ev = { 0 };
 
     while (loop->fdchanges.count) {
-        int fd = loop->fdchanges.ptr[--loop->fdchanges.count];
-        // GCOVR_EXCL_START
+        int fd = loop->fdchanges.ptr[loop->fdchanges.count - 1];
         EVIO_ASSERT(fd >= 0 && (size_t)fd < loop->fds.count);
-        // GCOVR_EXCL_STOP
 
         evio_fds *fds = &loop->fds.ptr[fd];
-        // GCOVR_EXCL_START
-        EVIO_ASSERT(fds->changes == loop->fdchanges.count + 1);
-        // GCOVR_EXCL_STOP
+        EVIO_ASSERT(fds->changes == loop->fdchanges.count);
+
+        --loop->fdchanges.count;
 
         evio_mask emask = fds->emask;
         evio_flag flags = fds->flags;
@@ -125,11 +123,9 @@ void evio_poll_update(evio_loop *loop)
             continue;
         }
 
-        // GCOVR_EXCL_START
         if (fds->emask == emask && !(flags & EVIO_POLL)) {
             continue;
         }
-        // GCOVR_EXCL_STOP
 
         ev.events = ((fds->emask & EVIO_READ)   ? EPOLLIN  : 0) |
                     ((fds->emask & EVIO_WRITE)  ? EPOLLOUT : 0) |
@@ -238,7 +234,6 @@ void evio_poll_wait(evio_loop *loop, int timeout)
             ((ev->events & (EPOLLOUT | EPOLLERR | EPOLLHUP)) ? EVIO_WRITE  : 0) |
             ((ev->events & (EPOLLET))                        ? EVIO_POLLET : 0);
 
-        // GCOVR_EXCL_START
         if (__evio_unlikely(emask & ~fds->emask)) {
             ev->events = ((fds->emask & EVIO_READ)   ? EPOLLIN  : 0) |
                          ((fds->emask & EVIO_WRITE)  ? EPOLLOUT : 0) |
@@ -246,12 +241,13 @@ void evio_poll_wait(evio_loop *loop, int timeout)
 
             int op = fds->emask ? EPOLL_CTL_MOD : EPOLL_CTL_DEL;
 
+            // GCOVR_EXCL_START
             if (!loop->iou || op == EPOLL_CTL_DEL) {
                 if (__evio_unlikely(epoll_ctl(loop->fd, op, fd, ev))) {
                     int err = errno;
                     EVIO_ABORT("epoll_ctl() failed, error %d: %s\n", err, EVIO_STRERROR(err));
                 }
-            } else {
+            } else { // GCOVR_EXCL_STOP
                 evio_uring_ctl(loop, op, fd, ev);
             }
         }
@@ -259,7 +255,6 @@ void evio_poll_wait(evio_loop *loop, int timeout)
         if (__evio_likely(!fds->changes)) {
             evio_queue_fd_events(loop, fd, emask);
         }
-        // GCOVR_EXCL_STOP
     }
 
     if (loop->iou) {

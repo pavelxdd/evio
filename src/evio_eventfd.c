@@ -42,15 +42,15 @@ static void evio_eventfd_notify(int fd)
             break;
         }
 
-        // GCOVR_EXCL_START
         int err = errno;
+        // GCOVR_EXCL_START
         if (err == EINTR) {
             continue;
         }
+        // GCOVR_EXCL_STOP
         if (err != EAGAIN) {
             break;
         }
-        // GCOVR_EXCL_STOP
 
         for (;;) {
             res = read(fd, &val, sizeof(val));
@@ -61,8 +61,8 @@ static void evio_eventfd_notify(int fd)
             if (errno == EINTR) {
                 continue;
             }
-            // GCOVR_EXCL_STOP
             break;
+            // GCOVR_EXCL_STOP
         }
     }
 }
