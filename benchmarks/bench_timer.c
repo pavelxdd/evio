@@ -92,8 +92,8 @@ static void bench_libuv_timer_overhead(void)
 // processing in the first loop iteration.
 //
 // This tests the efficiency of:
-// 1. Iterating through and removing many expired timers from the heap.
-// 2. Queueing and dispatching the corresponding callbacks.
+// - Iterating through and removing many expired timers from the heap.
+// - Queueing and dispatching the corresponding callbacks.
 //
 #define NUM_MANY_TIMERS 50000
 

@@ -1,8 +1,49 @@
 #include "test.h"
 
+static jmp_buf abort_jmp_buf;
+static size_t custom_abort_called;
+
+static FILE *custom_abort_handler(void *ctx)
+{
+    custom_abort_called++;
+    longjmp(abort_jmp_buf, 1);
+    return NULL; // GCOVR_EXCL_LINE
+}
+
+static FILE *leaking_loop_test_abort_handler(void *ctx)
+{
+    evio_loop_free(ctx);
+    return custom_abort_handler(NULL);
+}
+
+typedef struct {
+    size_t called;
+    evio_mask emask;
+} generic_cb_data;
+
+static void generic_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    generic_cb_data *data = base->data;
+    data->called++;
+    data->emask = emask;
+}
+
+// A callback that reads from the fd to clear the event state.
+static void read_and_count_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    char buf[1];
+    evio_poll *io = (evio_poll *)base;
+    read(io->fd, buf, sizeof(buf));
+    generic_cb(loop, base, emask);
+}
+
+// GCOVR_EXCL_START
+static void dummy_cb(evio_loop *loop, evio_base *base, evio_mask emask) {}
+// GCOVR_EXCL_STOP
+
 TEST(test_evio_poll)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -11,6 +52,7 @@ TEST(test_evio_poll)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
 
     // Double start should be a no-op
@@ -21,8 +63,8 @@ TEST(test_evio_poll)
     assert_int_equal(write(fds[1], "x", 1), 1);
 
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 1);
-    assert_true(generic_cb_emask & EVIO_READ);
+    assert_int_equal(data.called, 1);
+    assert_true(data.emask & EVIO_READ);
 
     evio_poll_stop(loop, &io);
     assert_int_equal(evio_refcount(loop), 0);
@@ -34,7 +76,7 @@ TEST(test_evio_poll)
 
 TEST(test_evio_poll_change)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -47,22 +89,24 @@ TEST(test_evio_poll_change)
     evio_poll io;
     // Use a callback that consumes the read event to avoid level-triggering issues.
     evio_poll_init(&io, read_and_count_cb, fds1[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
 
     // Trigger on first pipe
     assert_int_equal(write(fds1[1], "a", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 1);
-    reset_cb_state();
+    assert_int_equal(data.called, 1);
+    data.called = 0;
+    data.emask = 0;
 
     // Change to watch for write on the same fd.
     // Switch to a non-reading callback for this part.
     evio_poll_change(loop, &io, fds1[0], EVIO_WRITE);
     io.base.cb = generic_cb;
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 1);
-    assert_true(generic_cb_emask & EVIO_WRITE);
-    reset_cb_state();
+    assert_int_equal(data.called, 1);
+    assert_true(data.emask & EVIO_WRITE);
+    data.called = 0;
 
     // Change to watch for read on the second pipe.
     // Switch back to the reading callback.
@@ -71,18 +115,18 @@ TEST(test_evio_poll_change)
 
     assert_int_equal(write(fds1[1], "b", 1), 1); // write to old pipe
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 0); // should not trigger
+    assert_int_equal(data.called, 0); // should not trigger
 
     assert_int_equal(write(fds2[1], "c", 1), 1); // write to new pipe
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 1);
-    reset_cb_state();
+    assert_int_equal(data.called, 1);
+    data.called = 0;
 
     // Change with same mask should be a no-op. Since the data was read,
     // the fd is no longer readable, so no event should fire.
     evio_poll_change(loop, &io, fds2[0], EVIO_READ);
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     // Change to a new fd with emask=0. This should stop the watcher.
     int fds3[2] = { -1, -1 };
@@ -103,7 +147,7 @@ TEST(test_evio_poll_change)
 
 TEST(test_evio_poll_change_stop)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -112,6 +156,7 @@ TEST(test_evio_poll_change_stop)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
     assert_int_equal(evio_refcount(loop), 1);
 
@@ -129,7 +174,7 @@ TEST(test_evio_poll_modify)
 {
     evio_poll w;
     // Initial state to ensure EVIO_POLL is present
-    evio_poll_init(&w, generic_cb, 0, 0);
+    evio_poll_init(&w, dummy_cb, 0, 0);
     w.emask = EVIO_READ | EVIO_POLL;
 
     // Modify to WRITE, should preserve POLL
@@ -145,11 +190,20 @@ TEST(test_evio_poll_modify)
     assert_int_equal(w.emask, EVIO_POLL);
 }
 
-static void *eintr_thread_func(void *arg)
+typedef struct {
+    pthread_t thread;
+    int fd;
+} eintr_thread_arg;
+
+static void *eintr_thread_func(void *ptr)
 {
+    eintr_thread_arg *arg = ptr;
     // Let main thread enter epoll_pwait
     usleep(50000); // 50ms
-    pthread_kill(*(pthread_t *)arg, SIGUSR1);
+    pthread_kill(arg->thread, SIGUSR1);
+    // After interrupting, write to the pipe to unblock the second epoll_pwait call
+    usleep(10000); // give it a moment to re-enter epoll_pwait
+    assert_int_equal(write(arg->fd, "x", 1), 1);
     return NULL;
 }
 
@@ -158,36 +212,52 @@ static void sigusr1_handler(int signum) {}
 
 TEST(test_evio_poll_wait_eintr)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
+
+    // Setup a poll watcher on a pipe to make the loop block.
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+
+    evio_poll io;
+    evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
+    evio_poll_start(loop, &io);
 
     // Setup a dummy signal handler for SIGUSR1
     struct sigaction sa_new = { .sa_handler = sigusr1_handler };
     struct sigaction sa_old;
-    sigaction(SIGUSR1, &sa_new, &sa_old);
+    assert_int_equal(sigaction(SIGUSR1, &sa_new, &sa_old), 0);
 
-    pthread_t main_thread_id = pthread_self();
-    pthread_t killer_thread;
-    pthread_create(&killer_thread, NULL, eintr_thread_func, &main_thread_id);
+    pthread_t thread;
+    eintr_thread_arg arg = { .thread = pthread_self(), .fd = fds[1] };
+    assert_int_equal(pthread_create(&thread, NULL, eintr_thread_func, &arg), 0);
 
-    // This will call epoll_pwait with a timeout. The other thread will
-    // interrupt it with a signal. The loop in evio_poll_wait should
-    // handle EINTR and continue. The loop has no active watchers with refcount,
-    // so it will run once and exit.
+    // This will call epoll_pwait with a timeout of -1. The other thread will
+    // interrupt it with a signal. The for(;;) loop in evio_poll_wait should
+    // handle EINTR and call epoll_pwait again. The second call will be unblocked
+    // by the write to the pipe, which will queue an event.
+    // The loop will then execute the poll watcher's callback.
     evio_run(loop, EVIO_RUN_ONCE);
 
-    pthread_join(killer_thread, NULL);
+    assert_int_equal(pthread_join(thread, NULL), 0);
+
+    // The poll watcher's callback should have been called.
+    assert_int_equal(data.called, 1);
 
     // Restore default handler
-    sigaction(SIGUSR1, &sa_old, NULL);
+    assert_int_equal(sigaction(SIGUSR1, &sa_old, NULL), 0);
 
+    evio_poll_stop(loop, &io);
+    close(fds[0]);
+    close(fds[1]);
     evio_loop_free(loop);
 }
 
 TEST(test_evio_feed_fd)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -196,6 +266,7 @@ TEST(test_evio_feed_fd)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
 
     // Feed an event manually for the fd.
@@ -203,18 +274,19 @@ TEST(test_evio_feed_fd)
 
     // Run and check that the callback was called.
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 1);
-    assert_true(generic_cb_emask & EVIO_READ);
+    assert_int_equal(data.called, 1);
+    assert_true(data.emask & EVIO_READ);
 
-    reset_cb_state();
+    data.called = 0;
+    data.emask = 0;
 
     // Feed an error manually for the fd.
     evio_feed_fd_error(loop, fds[0]);
 
     // This should stop the watcher and call the callback with an error.
     evio_invoke_pending(loop);
-    assert_int_equal(generic_cb_called, 1);
-    assert_true(generic_cb_emask & EVIO_ERROR);
+    assert_int_equal(data.called, 1);
+    assert_true(data.emask & EVIO_ERROR);
     assert_false(io.active);
 
     evio_poll_stop(loop, &io);
@@ -225,7 +297,7 @@ TEST(test_evio_feed_fd)
 
 TEST(test_evio_poll_update_empty_emask)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -235,6 +307,7 @@ TEST(test_evio_poll_update_empty_emask)
     evio_poll io;
     // Initialize with no events. This will set EVIO_POLL flag internally.
     evio_poll_init(&io, generic_cb, fds[0], 0);
+    io.data = &data;
 
     // Start the watcher. This queues a change, and then clears the EVIO_POLL
     // flag from the watcher's emask, leaving it as 0.
@@ -249,7 +322,7 @@ TEST(test_evio_poll_update_empty_emask)
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     // No callback should have been called because nothing was watched.
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
     // The change should have been processed.
     assert_int_equal(loop->fdchanges.count, 0);
 
@@ -264,7 +337,7 @@ TEST(test_evio_poll_update_empty_emask)
 
     assert_int_equal(write(fds[1], "x", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 1);
+    assert_int_equal(data.called, 1);
 
     evio_poll_stop(loop, &io);
     close(fds[0]);
@@ -274,7 +347,7 @@ TEST(test_evio_poll_update_empty_emask)
 
 TEST(test_evio_poll_change_inactive)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -283,6 +356,7 @@ TEST(test_evio_poll_change_inactive)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
     // Watcher is initialized but not started, so it's inactive.
 
     // Calling change on an inactive watcher should start it.
@@ -295,7 +369,7 @@ TEST(test_evio_poll_change_inactive)
     // Trigger an event to make sure it's working.
     assert_int_equal(write(fds[1], "x", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 1);
+    assert_int_equal(data.called, 1);
 
     evio_poll_stop(loop, &io);
     close(fds[0]);
@@ -303,10 +377,11 @@ TEST(test_evio_poll_change_inactive)
     evio_loop_free(loop);
 }
 
-static size_t drain_events_loop(evio_loop *loop, size_t expected_calls, size_t loop_limit)
+static size_t drain_events_loop(evio_loop *loop, generic_cb_data *data, size_t expected_calls,
+                                size_t loop_limit)
 {
     size_t loops = 0;
-    while (generic_cb_called < expected_calls && loops < loop_limit) {
+    while (data->called < expected_calls && loops < loop_limit) {
         evio_run(loop, EVIO_RUN_NOWAIT);
         loops++;
     }
@@ -316,38 +391,38 @@ static size_t drain_events_loop(evio_loop *loop, size_t expected_calls, size_t l
 #define MANY_FDS 100
 TEST(test_evio_poll_many_events)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
     evio_poll io[MANY_FDS];
     int fds[MANY_FDS][2];
 
-    // 1. Setup phase: initialize and start all watchers.
     for (int i = 0; i < MANY_FDS; ++i) {
         fds[i][0] = fds[i][1] = -1;
         assert_int_equal(pipe(fds[i]), 0);
         // Use the read_and_count_cb to consume the event
         evio_poll_init(&io[i], read_and_count_cb, fds[i][0], EVIO_READ);
         // Store the read-end of the pipe in the watcher's data field
+        io[i].data = &data;
         evio_poll_start(loop, &io[i]);
     }
 
-    // 2. Flush phase: run the loop once to ensure evio_poll_update() runs
+    // Run the loop once to ensure evio_poll_update() runs
     // and all fds are added to epoll. We don't expect events yet.
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
-    // 3. Event generation phase: write to all pipes to make them readable.
+    // Write to all pipes to make them readable.
     for (int i = 0; i < MANY_FDS; ++i) {
         assert_int_equal(write(fds[i][1], "x", 1), 1);
     }
 
-    // 4. Processing phase: drain all pending events from the loop.
-    drain_events_loop(loop, MANY_FDS, MANY_FDS * 2);
-    assert_int_equal(generic_cb_called, MANY_FDS);
+    // Drain all pending events from the loop.
+    drain_events_loop(loop, &data, MANY_FDS, MANY_FDS * 2);
+    assert_int_equal(data.called, MANY_FDS);
 
-    // 5. Cleanup phase.
+    // Cleanup
     for (int i = 0; i < MANY_FDS; ++i) {
         evio_poll_stop(loop, &io[i]);
         close(fds[i][0]);
@@ -358,7 +433,7 @@ TEST(test_evio_poll_many_events)
 
 TEST(test_evio_poll_many_events_loop_break)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -367,15 +442,16 @@ TEST(test_evio_poll_many_events_loop_break)
 
     evio_poll io;
     evio_poll_init(&io, read_and_count_cb, fds[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
 
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     // Don't trigger any events. The loop should time out.
-    size_t loops = drain_events_loop(loop, 1, 5);
+    size_t loops = drain_events_loop(loop, &data, 1, 5);
     assert_int_equal(loops, 5);
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     evio_poll_stop(loop, &io);
     close(fds[0]);
@@ -385,7 +461,7 @@ TEST(test_evio_poll_many_events_loop_break)
 
 TEST(test_evio_poll_enoent_error)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -394,6 +470,7 @@ TEST(test_evio_poll_enoent_error)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
     evio_run(loop, EVIO_RUN_NOWAIT); // Add fd to epoll
 
@@ -407,8 +484,8 @@ TEST(test_evio_poll_enoent_error)
     // This run should process the change, recover from the ENOENT error by
     // re-adding the fd, and then receive the write-ready event.
     evio_run(loop, EVIO_RUN_ONCE);
-    assert_int_equal(generic_cb_called, 1);
-    assert_true(generic_cb_emask & EVIO_WRITE);
+    assert_int_equal(data.called, 1);
+    assert_true(data.emask & EVIO_WRITE);
 
     evio_poll_stop(loop, &io);
     close(fds[0]);
@@ -420,7 +497,7 @@ TEST(test_evio_poll_enoent_error)
 // when trying to poll a file descriptor that doesn't support polling (e.g., a regular file).
 TEST(test_evio_poll_eperm_error)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -430,6 +507,7 @@ TEST(test_evio_poll_eperm_error)
     evio_poll io;
     // Watch for both read and write, as /dev/null is always ready for both.
     evio_poll_init(&io, generic_cb, fd, EVIO_READ | EVIO_WRITE);
+    io.data = &data;
     evio_poll_start(loop, &io); // This will queue a change.
 
     // The first run will call epoll_ctl, which will fail with EPERM.
@@ -437,11 +515,11 @@ TEST(test_evio_poll_eperm_error)
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     // The callback should have been invoked with a normal poll event.
-    assert_int_equal(generic_cb_called, 1);
-    assert_true(generic_cb_emask & EVIO_POLL);
-    assert_true(generic_cb_emask & EVIO_READ);
-    assert_true(generic_cb_emask & EVIO_WRITE);
-    assert_false(generic_cb_emask & EVIO_ERROR);
+    assert_int_equal(data.called, 1);
+    assert_true(data.emask & EVIO_POLL);
+    assert_true(data.emask & EVIO_READ);
+    assert_true(data.emask & EVIO_WRITE);
+    assert_false(data.emask & EVIO_ERROR);
 
     // The watcher should still be active.
     assert_true(io.active);
@@ -454,7 +532,7 @@ TEST(test_evio_poll_eperm_error)
 
 TEST(test_evio_poll_eexist_error)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -469,13 +547,14 @@ TEST(test_evio_poll_eexist_error)
     // and should recover by using MOD.
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
     evio_run(loop, EVIO_RUN_NOWAIT); // Process the change
 
     // The watcher should be active and working.
     assert_int_equal(write(fds[1], "x", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 1);
+    assert_int_equal(data.called, 1);
 
     evio_poll_stop(loop, &io);
     close(fds[0]);
@@ -485,16 +564,22 @@ TEST(test_evio_poll_eexist_error)
 
 TEST(test_evio_poll_update_no_change)
 {
-    reset_cb_state();
+    generic_cb_data data1 = { 0 };
+    generic_cb_data data2 = { 0 };
+
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
     int fds[2] = { -1, -1 };
     assert_int_equal(pipe(fds), 0);
 
-    evio_poll io1, io2;
+    evio_poll io1;
     evio_poll_init(&io1, generic_cb, fds[0], EVIO_READ);
-    evio_poll_init(&io2, generic_cb2, fds[0], EVIO_READ);
+    io1.data = &data1;
+
+    evio_poll io2;
+    evio_poll_init(&io2, generic_cb, fds[0], EVIO_READ);
+    io2.data = &data2;
 
     // Start two watchers on the same fd.
     evio_poll_start(loop, &io1);
@@ -512,8 +597,8 @@ TEST(test_evio_poll_update_no_change)
     // The remaining watcher should still work.
     assert_int_equal(write(fds[1], "x", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 0);  // io1's cb
-    assert_int_equal(generic_cb2_called, 1); // io2's cb
+    assert_int_equal(data1.called, 0); // io1's cb not called
+    assert_int_equal(data2.called, 1); // io2's cb called
 
     evio_poll_stop(loop, &io2);
     close(fds[0]);
@@ -523,7 +608,7 @@ TEST(test_evio_poll_update_no_change)
 
 TEST(test_evio_poll_eexist_same_mask)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -532,34 +617,33 @@ TEST(test_evio_poll_eexist_same_mask)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
 
-    // 1. Start, run to add to epoll. emask is now READ.
     evio_poll_start(loop, &io);
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(loop->fds.ptr[fds[0]].emask, EVIO_READ);
 
-    // 2. Stop, run to remove from epoll. emask is now 0.
     evio_poll_stop(loop, &io);
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(loop->fds.ptr[fds[0]].emask, 0);
 
-    // 3. Manually add fd back to epoll to create desync.
+    // Manually add fd back to epoll to create desync.
     struct epoll_event ev = { .events = EPOLLIN, .data.u64 = 0 };
     assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_ADD, fds[0], &ev), 0);
 
-    // 4. Start watcher again. This queues a change.
+    // Start watcher again. This queues a change.
     evio_poll_start(loop, &io);
 
-    // 5. Run. poll_update will:
-    //    - See old emask was 0, so op=ADD.
-    //    - epoll_ctl(ADD) fails with EEXIST.
-    //    - The recovery logic will then call epoll_ctl(MOD), which should succeed.
+    // Run. poll_update will:
+    // - See old emask was 0, so op=ADD.
+    // - epoll_ctl(ADD) fails with EEXIST.
+    // - The recovery logic will then call epoll_ctl(MOD), which should succeed.
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     // Watcher should be working.
     assert_int_equal(write(fds[1], "x", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 1);
+    assert_int_equal(data.called, 1);
 
     evio_poll_stop(loop, &io);
     close(fds[0]);
@@ -569,7 +653,7 @@ TEST(test_evio_poll_eexist_same_mask)
 
 TEST(test_evio_poll_gen_counter_robustness)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -579,19 +663,19 @@ TEST(test_evio_poll_gen_counter_robustness)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fd, EVIO_READ);
+    io.data = &data;
 
-    // 1. Start and run. gen becomes 1.
     evio_poll_start(loop, &io);
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(loop->fds.ptr[fd].gen, 1);
 
-    // 2. Trigger a READ event by writing to the pipe.
+    // Trigger a READ event by writing to the pipe.
     assert_int_equal(write(fds[1], "x", 1), 1);
 
-    // 3. Force a change by modifying the event mask. This queues a change.
+    // Force a change by modifying the event mask. This queues a change.
     evio_poll_change(loop, &io, fd, EVIO_READ | EVIO_WRITE);
 
-    // 4. Run the loop.
+    // Run the loop.
     // - poll_update will call epoll_ctl(MOD), incrementing gen to 2.
     // - The fd is still readable from step 2, and is also writeable.
     // - epoll_wait returns a single event for gen=2 with events EPOLLIN | EPOLLOUT.
@@ -599,30 +683,31 @@ TEST(test_evio_poll_gen_counter_robustness)
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     // The callback should have been called ONCE, with both READ and WRITE flags.
-    assert_int_equal(generic_cb_called, 1);
-    assert_true(generic_cb_emask & EVIO_WRITE);
-    assert_true(generic_cb_emask & EVIO_READ);
+    assert_int_equal(data.called, 1);
+    assert_true(data.emask & EVIO_WRITE);
+    assert_true(data.emask & EVIO_READ);
     assert_int_equal(loop->fds.ptr[fd].gen, 2);
 
-    // 5. Clean up the pipe from the write in step 2 and reset state.
+    // Clean up the pipe from the write in step 2 and reset state.
     char buf[1];
     read(fd, buf, sizeof(buf));
-    reset_cb_state();
+    data.called = 0;
+    data.emask = 0;
 
-    // 6. Change watcher back to only watch for READ. This will increment gen to 3.
+    // Change watcher back to only watch for READ. This will increment gen to 3.
     evio_poll_change(loop, &io, fd, EVIO_READ);
     evio_run(loop, EVIO_RUN_NOWAIT); // Process the change.
-    assert_int_equal(generic_cb_called, 0); // No event should fire yet.
+    assert_int_equal(data.called, 0); // No event should fire yet.
     assert_int_equal(loop->fds.ptr[fd].gen, 3);
 
-    // 7. Trigger a new READ event. This will be for the current gen=3.
+    // Trigger a new READ event. This will be for the current gen=3.
     assert_int_equal(write(fds[1], "y", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
 
-    // 8. Now the callback for the fresh READ event should be called, and only for READ.
-    assert_int_equal(generic_cb_called, 1);
-    assert_true(generic_cb_emask & EVIO_READ);
-    assert_false(generic_cb_emask & EVIO_WRITE);
+    // Now the callback for the fresh READ event should be called, and only for READ.
+    assert_int_equal(data.called, 1);
+    assert_true(data.emask & EVIO_READ);
+    assert_false(data.emask & EVIO_WRITE);
 
     evio_poll_stop(loop, &io);
     close(fds[0]);
@@ -632,7 +717,7 @@ TEST(test_evio_poll_gen_counter_robustness)
 
 TEST(test_evio_poll_stale_event_no_watchers_invalidate)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -641,34 +726,61 @@ TEST(test_evio_poll_stale_event_no_watchers_invalidate)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
 
-    // 1. Start watcher and run to add to epoll.
     evio_poll_start(loop, &io);
     evio_run(loop, EVIO_RUN_NOWAIT);
 
-    // 2. Trigger event.
+    // Trigger event.
     assert_int_equal(write(fds[1], "x", 1), 1);
 
-    // 3. Stop the watcher.
     evio_poll_stop(loop, &io);
 
-    // 4. Run the loop. It will process the DEL change.
+    // Run the loop. It will process the DEL change.
     // It will also get the stale event from epoll_wait.
     // The handler will call evio_invalidate_fd, which should return 0
     // because there are no more watchers. This hits the target branch.
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     // No callback should have been called.
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     close(fds[0]);
     close(fds[1]);
     evio_loop_free(loop);
 }
 
+TEST(test_evio_poll_wait_ebadf_abort)
+{
+    void *old_abort_ctx;
+    evio_abort_cb old_abort = evio_get_abort(&old_abort_ctx);
+
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_set_abort(leaking_loop_test_abort_handler, loop);
+    custom_abort_called = 0;
+
+    // Close the epoll fd to force an error in epoll_pwait
+    int fd_to_close = loop->fd;
+    loop->fd = -1; // This will cause epoll_pwait to fail with EBADF and prevent double-close
+    close(fd_to_close);
+
+    if (setjmp(abort_jmp_buf) == 0) {
+        // This will call evio_poll_wait with a bad fd, which will abort.
+        evio_run(loop, EVIO_RUN_ONCE);
+        fail(); // GCOVR_EXCL_LINE
+    }
+
+    assert_int_equal(custom_abort_called, 1);
+
+    // The loop is freed by the test handler.
+    evio_set_abort(old_abort, old_abort_ctx);
+}
+
 TEST(test_evio_poll_stop_shared_fd)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -677,7 +789,9 @@ TEST(test_evio_poll_stop_shared_fd)
 
     evio_poll io1, io2;
     evio_poll_init(&io1, generic_cb, fds[0], EVIO_READ);
+    io1.data = &data;
     evio_poll_init(&io2, generic_cb, fds[0], EVIO_READ);
+    io2.data = &data;
 
     evio_poll_start(loop, &io1);
     evio_poll_start(loop, &io2);
@@ -694,7 +808,7 @@ TEST(test_evio_poll_stop_shared_fd)
     // p2 should still be active and working
     assert_int_equal(write(fds[1], "x", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 1);
+    assert_int_equal(data.called, 1);
 
     evio_poll_stop(loop, &io2);
     close(fds[0]);
@@ -704,7 +818,7 @@ TEST(test_evio_poll_stop_shared_fd)
 
 TEST(test_evio_poll_error_and_stop)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -713,6 +827,7 @@ TEST(test_evio_poll_error_and_stop)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
     evio_run(loop, EVIO_RUN_NOWAIT); // Process add
 
@@ -729,7 +844,7 @@ TEST(test_evio_poll_error_and_stop)
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     assert_int_equal(loop->fderrors.count, 0);
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     close(fds[0]);
     close(fds[1]);
@@ -738,35 +853,36 @@ TEST(test_evio_poll_error_and_stop)
 
 TEST(test_evio_poll_resizing_and_invalidation)
 {
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
     evio_poll io[5];
     int fds[5][2];
 
-    // 1. Start 3 watchers
     for (int i = 0; i < 3; ++i) {
         fds[i][0] = fds[i][1] = -1;
         assert_int_equal(pipe(fds[i]), 0);
         evio_poll_init(&io[i], generic_cb, fds[i][0], EVIO_READ);
+        io[i].data = &data;
         evio_poll_start(loop, &io[i]);
     }
     assert_int_equal(loop->refcount, 3);
     evio_run(loop, EVIO_RUN_NOWAIT); // Process changes
 
-    // 2. Stop a watcher in the middle. This will trigger list-shrinking logic.
+    // Stop a watcher in the middle. This will trigger list-shrinking logic.
     evio_poll_stop(loop, &io[1]);
     assert_int_equal(loop->refcount, 2);
     evio_run(loop, EVIO_RUN_NOWAIT); // Process changes
 
-    // 3. Write to the remaining active pipes, ensure they work.
-    reset_cb_state();
+    // Write to the remaining active pipes, ensure they work.
+    data.called = 0;
     assert_int_equal(write(fds[0][1], "x", 1), 1);
     assert_int_equal(write(fds[2][1], "x", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 2);
+    assert_int_equal(data.called, 2);
 
-    // 4. Invalidate the stopped watcher's fd by closing it, then stop another watcher.
+    // Invalidate the stopped watcher's fd by closing it, then stop another watcher.
     // This tests the evio_invalidate_fd path.
     close(fds[1][0]);
     close(fds[1][1]);
@@ -774,7 +890,7 @@ TEST(test_evio_poll_resizing_and_invalidation)
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(loop->refcount, 1);
 
-    // 5. Cleanup
+    // Cleanup
     evio_poll_stop(loop, &io[2]);
     close(fds[0][0]);
     close(fds[0][1]);
@@ -784,116 +900,62 @@ TEST(test_evio_poll_resizing_and_invalidation)
     evio_loop_free(loop);
 }
 
-TEST(test_evio_poll_init_invalid_fd_assert)
-{
-    evio_poll io;
-    expect_assert_failure(evio_poll_init(&io, generic_cb, -1, EVIO_READ));
-}
-
-TEST(test_evio_poll_change_invalid_fd_assert)
+TEST(test_evio_poll_invalid_fd_asserts)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
     int fds[2] = { -1, -1 };
     assert_int_equal(pipe(fds), 0);
+    int valid_fd = fds[0];
 
+    // Test init with invalid fd
     evio_poll io;
-    evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
-    evio_poll_start(loop, &io);
+    expect_assert_failure(evio_poll_init(&io, dummy_cb, -1, EVIO_READ));
 
-    // This should trigger the assert in evio_poll_set
+    // Test start with invalid fd
+    evio_init(&io.base, dummy_cb);
+    io.fd = -1; // Corrupt fd before start
+    io.emask = EVIO_READ;
+    expect_assert_failure(evio_poll_start(loop, &io));
+
+    // Setup a valid watcher for further tests
+    evio_poll_init(&io, dummy_cb, valid_fd, EVIO_READ);
+    evio_poll_start(loop, &io);
+    assert_true(io.active);
+
+    // Test change with corrupted invalid fd
+    int original_fd = io.fd;
+    io.fd = -1;
     expect_assert_failure(evio_poll_change(loop, &io, -1, EVIO_READ));
+    io.fd = loop->fds.count;
+    expect_assert_failure(evio_poll_change(loop, &io, loop->fds.count, EVIO_READ));
+    io.fd = original_fd; // Restore
+
+    // Test stop with corrupted invalid fd
+    io.fd = -1; // Corrupt fd
+    expect_assert_failure(evio_poll_stop(loop, &io));
+    io.fd = original_fd; // Restore
+
+    // Test stop with corrupted out-of-bounds fd
+    io.fd = loop->fds.count;
+    expect_assert_failure(evio_poll_stop(loop, &io));
+    io.fd = original_fd; // Restore
+
+    // The watcher is still active because previous calls aborted. Stop it cleanly.
+    evio_poll_stop(loop, &io);
 
     // Cleanup
-    evio_poll_stop(loop, &io);
     close(fds[0]);
     close(fds[1]);
     evio_loop_free(loop);
 }
 
-TEST(test_evio_poll_change_active_invalid_fd_assert)
-{
-    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
-    assert_non_null(loop);
-
-    int fd = open("/dev/null", O_RDONLY);
-    assert_true(fd >= 0);
-
-    evio_poll w;
-    evio_poll_init(&w, generic_cb, fd, EVIO_READ);
-    evio_poll_start(loop, &w);
-    assert_true(w.active);
-
-    int original_fd = w.fd;
-
-    // Test with w->fd < 0
-    w.fd = -1;
-    expect_assert_failure(evio_poll_change(loop, &w, -1, EVIO_WRITE));
-    w.fd = original_fd; // Restore
-
-    // Test with w->fd >= loop->fds.count
-    int invalid_fd = loop->fds.count;
-    w.fd = invalid_fd;
-    expect_assert_failure(evio_poll_change(loop, &w, invalid_fd, EVIO_WRITE));
-    w.fd = original_fd; // Restore
-
-    // The watcher is still active because the previous calls to evio_poll_change
-    // aborted. We need to stop it cleanly.
-    evio_poll_stop(loop, &w);
-
-    close(fd);
-    evio_loop_free(loop);
-}
-
-TEST(test_evio_poll_start_invalid_fd_assert)
-{
-    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
-    assert_non_null(loop);
-
-    evio_poll io;
-    evio_init(&io.base, generic_cb);
-    io.fd = -1;
-    io.emask = EVIO_READ;
-    expect_assert_failure(evio_poll_start(loop, &io));
-
-    evio_loop_free(loop);
-}
-
-TEST(test_evio_poll_stop_invalid_fd_asserts)
-{
-    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
-    assert_non_null(loop);
-
-    int fd = open("/dev/null", O_RDONLY);
-    assert_true(fd >= 0);
-
-    evio_poll w;
-    evio_poll_init(&w, generic_cb, fd, EVIO_READ);
-    evio_poll_start(loop, &w);
-    assert_true(w.active);
-
-    // Test w->fd < 0
-    w.fd = -1;
-    expect_assert_failure(evio_poll_stop(loop, &w));
-    w.fd = fd; // Restore fd
-
-    // Test w->fd >= loop->fds.count
-    w.fd = loop->fds.count;
-    expect_assert_failure(evio_poll_stop(loop, &w));
-    w.fd = fd; // Restore fd
-
-    // The watcher is still active because the previous calls to evio_poll_stop
-    // aborted. We need to stop it cleanly.
-    evio_poll_stop(loop, &w);
-
-    close(fd);
-    evio_loop_free(loop);
-}
-
 TEST(test_evio_poll_stale_event_gen_mismatch)
 {
-    reset_cb_state();
+    generic_cb_data data1 = { 0 };
+    generic_cb_data data2 = { 0 };
+
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -901,25 +963,27 @@ TEST(test_evio_poll_stale_event_gen_mismatch)
     assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
     int fd = fds[0];
 
-    evio_poll io1, io2;
+    evio_poll io1;
     // Use two different callbacks to distinguish the watchers
     evio_poll_init(&io1, generic_cb, fd, EVIO_READ);
-    evio_poll_init(&io2, generic_cb2, fd, EVIO_WRITE);
+    io1.data = &data1;
 
-    // 1. Start io1 (READ), run to add to epoll. gen becomes 1.
+    evio_poll io2;
+    evio_poll_init(&io2, generic_cb, fd, EVIO_WRITE);
+    io2.data = &data2;
+
     evio_poll_start(loop, &io1);
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(loop->fds.ptr[fd].gen, 1);
 
-    // 2. Trigger a READ event. Kernel now has a pending READ event for gen=1.
+    // Trigger a READ event. Kernel now has a pending READ event for gen=1.
     assert_int_equal(write(fds[1], "x", 1), 1);
 
-    // 3. Stop io1 and start io2 (WRITE) without running the loop.
     // This forces the event mask to change, which will increment the generation.
     evio_poll_stop(loop, &io1);
     evio_poll_start(loop, &io2);
 
-    // 4. Run the loop once.
+    // Run the loop once.
     // - evio_poll_update will see the mask changed from READ to WRITE,
     //   call epoll_ctl(MOD), and increment gen to 2.
     // - evio_poll_wait will receive both the stale READ event (for gen=1) and
@@ -928,10 +992,10 @@ TEST(test_evio_poll_stale_event_gen_mismatch)
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     // The callback for the stale watcher (io1) should NOT have been called.
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data1.called, 0);
 
     // The callback for the new watcher (io2) SHOULD have been called.
-    assert_int_equal(generic_cb2_called, 1);
+    assert_int_equal(data2.called, 1);
 
     // Cleanup
     char buf[1];
@@ -945,7 +1009,7 @@ TEST(test_evio_poll_stale_event_gen_mismatch)
 
 TEST(test_evio_poll_event_with_pending_change)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -954,36 +1018,37 @@ TEST(test_evio_poll_event_with_pending_change)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
 
-    // 1. Start watcher and process initial change manually
+    // Start watcher and process initial change manually
     evio_poll_start(loop, &io);
     evio_poll_update(loop);
     assert_int_equal(loop->fdchanges.count, 0);
 
-    // 2. Trigger an event and queue a change for the same fd
+    // Trigger an event and queue a change for the same fd
     assert_int_equal(write(fds[1], "x", 1), 1);
     evio_poll_change(loop, &io, fds[0], EVIO_READ | EVIO_WRITE);
     assert_true(loop->fdchanges.count > 0);
 
-    // 3. Call poll_wait manually. It will receive the event, but since a change is pending
-    //    for that fd, it should drop the event.
+    // Call poll_wait manually. It will receive the event, but since a change is pending
+    // for that fd, it should drop the event.
     evio_poll_wait(loop, 0);
 
-    // 4. No event should have been queued.
+    // No event should have been queued.
     evio_invoke_pending(loop);
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
-    // 5. Now, process the pending change manually.
+    // Now, process the pending change manually.
     evio_poll_update(loop);
     assert_int_equal(loop->fdchanges.count, 0);
 
-    // 6. The socket is still readable. Call poll_wait again. This time, no change is pending,
-    //    so the event should be queued.
+    // The socket is still readable. Call poll_wait again.
+    // This time, no change is pending, so the event should be queued.
     evio_poll_wait(loop, 0);
     evio_invoke_pending(loop);
-    assert_int_equal(generic_cb_called, 1);
-    assert_true(generic_cb_emask & EVIO_READ);
-    assert_true(generic_cb_emask & EVIO_WRITE);
+    assert_int_equal(data.called, 1);
+    assert_true(data.emask & EVIO_READ);
+    assert_true(data.emask & EVIO_WRITE);
 
     evio_poll_stop(loop, &io);
     close(fds[0]);
@@ -991,17 +1056,16 @@ TEST(test_evio_poll_event_with_pending_change)
     evio_loop_free(loop);
 }
 
-static void error_cb(evio_loop *loop, evio_base *w, evio_mask emask)
+static void error_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     if (emask & EVIO_ERROR) {
-        size_t *counter = w->data;
+        size_t *counter = base->data;
         ++(*counter);
     }
 }
 
 TEST(test_evio_poll_update_ebadf)
 {
-    reset_cb_state();
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -1064,7 +1128,7 @@ TEST(test_evio_poll_error_cb_no_error)
 
 TEST(test_evio_poll_spurious_event)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -1073,11 +1137,12 @@ TEST(test_evio_poll_spurious_event)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
 
     // Run once to add the fd to epoll with EVIO_READ
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     // Manually change the epoll registration to include EPOLLOUT.
     // This creates a mismatch between what evio thinks it's watching
@@ -1094,7 +1159,7 @@ TEST(test_evio_poll_spurious_event)
 
     // No callback should be called, because the watcher is only for EVIO_READ
     // and the spurious event was EVIO_WRITE.
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     // Verify the internal state was corrected. The emask should be unchanged
     // as the library corrects the kernel state to match its own.
@@ -1108,28 +1173,29 @@ TEST(test_evio_poll_spurious_event)
 
 TEST(test_evio_poll_eexist_mod_fail)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
     int fds[2] = { -1, -1 };
     assert_int_equal(pipe(fds), 0);
 
-    // 1. Start and run a watcher to set the initial fds state (emask=READ, cache=READ).
+    // Start and run a watcher to set the initial fds state (emask=READ, cache=READ).
     evio_poll io1;
     evio_poll_init(&io1, generic_cb, fds[0], EVIO_READ);
+    io1.data = &data;
     evio_poll_start(loop, &io1);
     evio_run(loop, EVIO_RUN_NOWAIT);
 
-    // 2. Stop and run to clear the epoll registration from evio's perspective.
+    // Stop and run to clear the epoll registration from evio's perspective.
     evio_poll_stop(loop, &io1);
     evio_run(loop, EVIO_RUN_NOWAIT);
 
-    // 3. Manually add the FD back to epoll to create a desync.
+    // Manually add the FD back to epoll to create a desync.
     struct epoll_event ev = { .events = EPOLLIN, .data.u64 = 0 };
     assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_ADD, fds[0], &ev), 0);
 
-    // 4. Start a new watcher with a different mask (WRITE). This queues a change.
+    // Start a new watcher with a different mask (WRITE). This queues a change.
     evio_poll io2;
     evio_poll_init(&io2, error_cb, fds[0], EVIO_WRITE);
     evio_poll_start(loop, &io2);
@@ -1137,14 +1203,14 @@ TEST(test_evio_poll_eexist_mod_fail)
     size_t counter = 0;
     io2.data = &counter;
 
-    // 5. Close the fd before running the loop.
+    // Close the fd before running the loop.
     close(fds[0]);
 
-    // 6. Run. poll_update will:
-    //    - op=ADD (old emask was 0), epoll_ctl(ADD) fails with EEXIST.
-    //    - case EEXIST: cache(READ) != new_cache(WRITE).
-    //    - epoll_ctl(MOD) on closed fd fails with EBADF.
-    //    - break is hit -> evio_queue_fd_errors is called.
+    // Run. poll_update will:
+    // - op=ADD (old emask was 0), epoll_ctl(ADD) fails with EEXIST.
+    // - case EEXIST: cache(READ) != new_cache(WRITE).
+    // - epoll_ctl(MOD) on closed fd fails with EBADF.
+    // - break is hit -> evio_queue_fd_errors is called.
     evio_run(loop, EVIO_RUN_NOWAIT);
     evio_invoke_pending(loop);
 
@@ -1157,14 +1223,12 @@ TEST(test_evio_poll_eexist_mod_fail)
 
 TEST(test_evio_poll_enoent_add_fail)
 {
-    reset_cb_state();
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
     int fds[2] = { -1, -1 };
     assert_int_equal(pipe(fds), 0);
 
-    // 1. Start and run a watcher to add it to epoll.
     evio_poll io;
     evio_poll_init(&io, error_cb, fds[0], EVIO_READ);
     evio_poll_start(loop, &io);
@@ -1174,19 +1238,19 @@ TEST(test_evio_poll_enoent_add_fail)
 
     evio_run(loop, EVIO_RUN_NOWAIT);
 
-    // 2. Manually remove the FD from epoll to create a desync.
+    // Manually remove the FD from epoll to create a desync.
     struct epoll_event ev = { 0 };
     assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_DEL, fds[0], &ev), 0);
 
-    // 3. Close the fd and then queue a change.
+    // Close the fd and then queue a change.
     close(fds[0]);
     evio_poll_change(loop, &io, fds[0], EVIO_WRITE);
 
-    // 4. Run. poll_update will:
-    //    - op=MOD, epoll_ctl(MOD) fails with ENOENT.
-    //    - case ENOENT:
-    //    - epoll_ctl(ADD) on closed fd fails with EBADF.
-    //    - break is hit -> evio_queue_fd_errors is called.
+    // Run. poll_update will:
+    // - op=MOD, epoll_ctl(MOD) fails with ENOENT.
+    // - case ENOENT:
+    // - epoll_ctl(ADD) on closed fd fails with EBADF.
+    // - break is hit -> evio_queue_fd_errors is called.
     evio_run(loop, EVIO_RUN_NOWAIT);
     evio_invoke_pending(loop);
 
@@ -1199,7 +1263,7 @@ TEST(test_evio_poll_enoent_add_fail)
 
 TEST(test_evio_poll_stale_event_invalidated)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -1208,6 +1272,7 @@ TEST(test_evio_poll_stale_event_invalidated)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
     evio_run(loop, EVIO_RUN_NOWAIT); // Add to epoll
 
@@ -1223,7 +1288,7 @@ TEST(test_evio_poll_stale_event_invalidated)
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     // No callback should have been called.
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     close(fds[0]);
     close(fds[1]);

@@ -12,9 +12,9 @@
 #define NUM_SIGNALS 1000000
 
 // --- evio ---
-static void evio_signal_cb(evio_loop *loop, evio_base *w, evio_mask emask)
+static void evio_signal_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    size_t *count = w->data;
+    size_t *count = base->data;
     ++(*count);
 }
 

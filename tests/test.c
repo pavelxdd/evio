@@ -2,64 +2,6 @@
 
 #include <getopt.h>
 
-size_t generic_cb_called = 0;
-evio_mask generic_cb_emask = 0;
-
-void generic_cb(evio_loop *loop, evio_base *w, evio_mask emask)
-{
-    generic_cb_called++;
-    generic_cb_emask = emask;
-}
-
-size_t generic_cb2_called = 0;
-
-void generic_cb2(evio_loop *loop, evio_base *w, evio_mask emask)
-{
-    generic_cb2_called++;
-}
-
-size_t break_cb_called = 0;
-
-void break_cb(evio_loop *loop, evio_base *w, evio_mask emask)
-{
-    break_cb_called++;
-    evio_break(loop, EVIO_BREAK_ALL);
-}
-
-void reset_cb_state(void)
-{
-    generic_cb_called = 0;
-    generic_cb_emask = 0;
-    generic_cb2_called = 0;
-    break_cb_called = 0;
-}
-
-// A callback that reads from the fd to clear the event state.
-void read_and_count_cb(evio_loop *loop, evio_base *w, evio_mask emask)
-{
-    char buf[1];
-    int fd = ((evio_poll *)w)->fd;
-    read(fd, buf, sizeof(buf));
-    generic_cb_called++;
-}
-
-jmp_buf abort_jmp_buf;
-size_t custom_abort_called = 0;
-
-FILE *custom_abort_handler(void *ctx)
-{
-    custom_abort_called++;
-    longjmp(abort_jmp_buf, 1);
-    return NULL; // GCOVR_EXCL_LINE
-}
-
-jmp_buf test_abort_jmp_buf;
-
-void test_abort_func(void)
-{
-    longjmp(test_abort_jmp_buf, 1);
-}
-
 enum {
     OPT_START = 0xff,
     OPT_OUTPUT,
@@ -206,7 +148,7 @@ TEST(test_cmocka)
     assert_true(true);
 }
 
-TEST(test_cmocka_prestate, .initial_state = (void *)"")
+TEST(test_cmocka_initial_state, .initial_state = (void *)"")
 {
     assert_non_null(state);
     assert_ptr_equal(*state, "");
@@ -230,7 +172,7 @@ TEST(test_cmocka_setup_teardown,
      .setup_func    = test_setup,
      .teardown_func = test_teardown)
 {
-    test_cmocka_prestate(state);
+    test_cmocka_initial_state(state);
     *state = NULL;
 }
 

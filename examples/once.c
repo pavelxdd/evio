@@ -28,7 +28,6 @@ int main(void)
     }
 
     // --- Part 1: Trigger by I/O ---
-    printf("--- Part 1: Trigger by I/O ---\n");
     int fds1[2] = { -1, -1 };
     if (pipe(fds1) != 0) {
         perror("pipe");
@@ -50,8 +49,7 @@ int main(void)
     close(fds1[1]);
 
     // --- Part 2: Trigger by Timeout ---
-    printf("\n--- Part 2: Trigger by Timeout ---\n");
-    int fds2[2];
+    int fds2[2] = { -1, -1 };
     if (pipe(fds2) != 0) {
         perror("pipe");
         return EXIT_FAILURE;

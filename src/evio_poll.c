@@ -192,12 +192,11 @@ void evio_poll_wait(evio_loop *loop, int timeout)
     }
 
     int events_count;
-    for (;;) { // GCOVR_EXCL_LINE
+    for (;;) {
         events_count = epoll_pwait(loop->fd,
                                    loop->events.ptr,
                                    loop->events.count,
                                    timeout, &loop->sigmask);
-        // GCOVR_EXCL_START
         if (__evio_likely(events_count >= 0)) {
             break;
         }
@@ -208,7 +207,6 @@ void evio_poll_wait(evio_loop *loop, int timeout)
         }
 
         EVIO_ABORT("epoll_pwait() failed, error %d: %s\n", err, EVIO_STRERROR(err));
-        // GCOVR_EXCL_STOP
     }
 
     for (size_t i = events_count; i--;) {

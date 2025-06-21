@@ -1,12 +1,16 @@
 #include "test.h"
 
+// GCOVR_EXCL_START
+static void dummy_cb(evio_loop *loop, evio_base *base, evio_mask emask) {}
+// GCOVR_EXCL_STOP
+
 TEST(test_evio_heap_sift)
 {
     // Test for evio_heap_down to cover both left and right child comparisons
     evio_node heap[3];
     evio_base b[3];
     for (int i = 0; i < 3; ++i) {
-        evio_init(&b[i], generic_cb);
+        evio_init(&b[i], dummy_cb);
     }
 
     // Case 1: left child is smaller
@@ -50,9 +54,9 @@ TEST(test_evio_heap_adjust_up)
     assert_non_null(loop);
 
     evio_timer tm1, tm2, tm3;
-    evio_timer_init(&tm1, generic_cb, 0);
-    evio_timer_init(&tm2, generic_cb, 0);
-    evio_timer_init(&tm3, generic_cb, 0);
+    evio_timer_init(&tm1, dummy_cb, 0);
+    evio_timer_init(&tm2, dummy_cb, 0);
+    evio_timer_init(&tm3, dummy_cb, 0);
 
     // Start timers to build a heap
     evio_timer_start(loop, &tm1, 100); // root
@@ -104,7 +108,7 @@ TEST(test_is_min_heap_coverage)
     evio_node heap[4];
     evio_base b[4];
     for (int i = 0; i < 4; ++i) {
-        evio_init(&b[i], generic_cb);
+        evio_init(&b[i], dummy_cb);
     }
 
     // Case 1: Valid heap where right child is smaller than left.
@@ -183,7 +187,7 @@ TEST(test_evio_heap_adjust_down)
 
     evio_timer tm[5];
     for (int i = 0; i < 5; ++i) {
-        evio_timer_init(&tm[i], generic_cb, 0);
+        evio_timer_init(&tm[i], dummy_cb, 0);
     }
 
     // Build a heap that allows for a clear sift-down scenario.

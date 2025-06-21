@@ -21,9 +21,9 @@ typedef struct {
     char buf[1];
 } evio_poll_ctx;
 
-static void evio_read_cb(evio_loop *loop, evio_base *w, evio_mask emask)
+static void evio_read_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    evio_poll_ctx *ctx = (evio_poll_ctx *)w->data;
+    evio_poll_ctx *ctx = (evio_poll_ctx *)base->data;
     read(ctx->read_fd, ctx->buf, sizeof(ctx->buf));
     ctx->reads++;
     if (ctx->writes < NUM_PINGS) {
@@ -31,16 +31,16 @@ static void evio_read_cb(evio_loop *loop, evio_base *w, evio_mask emask)
     } else if (ctx->reads == NUM_PINGS) {
         evio_break(loop, EVIO_BREAK_ALL);
     }
-    evio_poll_stop(loop, (evio_poll *)w);
+    evio_poll_stop(loop, (evio_poll *)base);
 }
 
-static void evio_write_cb(evio_loop *loop, evio_base *w, evio_mask emask)
+static void evio_write_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    evio_poll_ctx *ctx = (evio_poll_ctx *)w->data;
+    evio_poll_ctx *ctx = (evio_poll_ctx *)base->data;
     write(ctx->write_fd, "p", 1);
     ctx->writes++;
     evio_poll_start(loop, &ctx->reader_watcher);
-    evio_poll_stop(loop, (evio_poll *)w);
+    evio_poll_stop(loop, (evio_poll *)base);
 }
 
 static void bench_evio_poll(void)

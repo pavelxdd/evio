@@ -74,22 +74,3 @@
     static void __func (void **state __evio_unused)
 
 #define TEST(__func, ...) TEST_UNIT(#__func, __func, ##__VA_ARGS__)
-
-extern size_t generic_cb_called;
-extern evio_mask generic_cb_emask;
-extern size_t generic_cb2_called;
-extern size_t break_cb_called;
-
-void generic_cb(evio_loop *loop, evio_base *w, evio_mask emask);
-void generic_cb2(evio_loop *loop, evio_base *w, evio_mask emask);
-void break_cb(evio_loop *loop, evio_base *w, evio_mask emask);
-void reset_cb_state(void);
-void read_and_count_cb(evio_loop *loop, evio_base *w, evio_mask emask);
-
-extern jmp_buf abort_jmp_buf;
-extern size_t custom_abort_called;
-
-FILE *custom_abort_handler(void *ctx);
-
-extern jmp_buf test_abort_jmp_buf;
-void test_abort_func(void);

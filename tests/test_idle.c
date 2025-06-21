@@ -1,38 +1,52 @@
 #include "test.h"
 
+typedef struct {
+    size_t called;
+    evio_mask emask;
+} generic_cb_data;
+
+static void generic_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    generic_cb_data *data = base->data;
+    data->called++;
+    data->emask = emask;
+}
+
 TEST(test_evio_idle)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
     evio_idle idle;
     evio_idle_init(&idle, generic_cb);
+    idle.data = &data;
     evio_idle_start(loop, &idle);
 
     evio_run(loop, EVIO_RUN_NOWAIT);
 
-    assert_int_equal(generic_cb_called, 1);
-    assert_int_equal(generic_cb_emask, EVIO_IDLE);
+    assert_int_equal(data.called, 1);
+    assert_int_equal(data.emask, EVIO_IDLE);
 
     evio_idle_stop(loop, &idle);
     evio_loop_free(loop);
 }
 
-static void local_timer_cb(evio_loop *loop, evio_base *w, evio_mask emask)
+static void local_timer_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    size_t *counter = w->data;
+    size_t *counter = base->data;
     ++(*counter);
 }
 
 TEST(test_evio_idle_with_pending)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
     evio_idle idle;
     evio_idle_init(&idle, generic_cb);
+    idle.data = &data;
     evio_idle_start(loop, &idle);
 
     evio_timer tm;
@@ -47,14 +61,14 @@ TEST(test_evio_idle_with_pending)
     evio_run(loop, EVIO_RUN_ONCE);
 
     assert_int_equal(counter, 1);
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     // Run again. Now the timer is stopped, and no events are pending.
     // The idle watcher should fire.
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     assert_int_equal(counter, 1); // Unchanged
-    assert_int_equal(generic_cb_called, 1); // Idle fires
+    assert_int_equal(data.called, 1); // Idle fires
 
     evio_idle_stop(loop, &idle);
     evio_loop_free(loop);

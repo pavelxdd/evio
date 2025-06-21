@@ -1,25 +1,38 @@
 #include "test.h"
 
 typedef struct {
+    size_t called;
+    evio_mask emask;
+} generic_cb_data;
+
+static void generic_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    generic_cb_data *data = base->data;
+    data->called++;
+    data->emask = emask;
+}
+
+typedef struct {
     evio_loop *loop;
     evio_async *async;
 } thread_arg;
 
-static void *thread_func(void *arg)
+static void *thread_func(void *ptr)
 {
-    thread_arg *t_arg = arg;
-    evio_async_send(t_arg->loop, t_arg->async);
+    thread_arg *arg = ptr;
+    evio_async_send(arg->loop, arg->async);
     return NULL;
 }
 
 TEST(test_evio_async)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
     evio_async async;
     evio_async_init(&async, generic_cb);
+    async.data = &data;
     evio_async_start(loop, &async);
 
     // Double start should be a no-op
@@ -31,8 +44,9 @@ TEST(test_evio_async)
 
     // This will block until the eventfd is written to by the other thread
     evio_run(loop, EVIO_RUN_ONCE);
-    assert_int_equal(generic_cb_called, 1);
-    assert_int_equal(generic_cb_emask, EVIO_ASYNC);
+
+    assert_int_equal(data.called, 1);
+    assert_int_equal(data.emask, EVIO_ASYNC);
 
     assert_int_equal(pthread_join(thread, NULL), 0);
 
@@ -58,12 +72,13 @@ static void *thread_func_multi(void *arg)
 
 TEST(test_evio_async_multi_send)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
     evio_async async;
     evio_async_init(&async, generic_cb);
+    async.data = &data;
     evio_async_start(loop, &async);
 
     pthread_t threads[2];
@@ -84,8 +99,9 @@ TEST(test_evio_async_multi_send)
     // Both threads sent, but only one should have triggered evio_eventfd_write.
     // We expect one callback.
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 1);
-    assert_int_equal(generic_cb_emask, EVIO_ASYNC);
+
+    assert_int_equal(data.called, 1);
+    assert_int_equal(data.emask, EVIO_ASYNC);
 
     evio_async_stop(loop, &async);
     evio_loop_free(loop);
@@ -96,9 +112,15 @@ TEST(test_evio_async_pending)
 {
     evio_async async;
     evio_async_init(&async, generic_cb);
+
+    generic_cb_data data = { 0 };
+    async.data = &data;
+
     assert_false(evio_async_pending(&async));
 
     // Simulate send
     atomic_store_explicit(&async.status.value, 1, memory_order_release);
     assert_true(evio_async_pending(&async));
+
+    assert_int_equal(data.called, 0);
 }

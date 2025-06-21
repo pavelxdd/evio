@@ -1,5 +1,15 @@
 #include "test.h"
 
+static jmp_buf abort_jmp_buf;
+static size_t custom_abort_called;
+
+static FILE *custom_abort_handler(void *ctx)
+{
+    custom_abort_called++;
+    longjmp(abort_jmp_buf, 1);
+    return NULL; // GCOVR_EXCL_LINE
+}
+
 TEST(test_evio_malloc)
 {
     for (size_t i = 1; i < 100; ++i) {

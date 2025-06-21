@@ -43,7 +43,7 @@ void *evio_list_resize(void *ptr, size_t size, size_t count, size_t *total);
  * @param list The list to add the watcher to.
  * @param do_ref `true` to increment the loop's reference count.
  */
-void evio_list_start(evio_loop *loop, evio_base *w,
+void evio_list_start(evio_loop *loop, evio_base *base,
                      evio_list *list, bool do_ref);
 
 /**
@@ -53,5 +53,5 @@ void evio_list_start(evio_loop *loop, evio_base *w,
  * @param list The list to remove the watcher from.
  * @param do_ref `true` to decrement the loop's reference count.
  */
-void evio_list_stop(evio_loop *loop, evio_base *w,
+void evio_list_stop(evio_loop *loop, evio_base *base,
                     evio_list *list, bool do_ref);

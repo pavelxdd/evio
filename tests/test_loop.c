@@ -2,13 +2,44 @@
 
 #include <sys/resource.h>
 
-// An abort handler specifically for tests that are expected to leak the loop.
-// It frees the loop before jumping.
-static FILE *leaking_test_abort_handler(void *ctx)
+static jmp_buf abort_jmp_buf;
+static size_t custom_abort_called;
+
+static FILE *custom_abort_handler(void *ctx)
+{
+    custom_abort_called++;
+    longjmp(abort_jmp_buf, 1);
+    return NULL; // GCOVR_EXCL_LINE
+}
+
+static FILE *leaking_loop_test_abort_handler(void *ctx)
 {
     evio_loop_free(ctx);
     return custom_abort_handler(NULL);
 }
+
+typedef struct {
+    size_t called;
+    evio_mask emask;
+} generic_cb_data;
+
+static void generic_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    generic_cb_data *data = base->data;
+    data->called++;
+    data->emask = emask;
+}
+
+static void break_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    size_t *counter = base->data;
+    (*counter)++;
+    evio_break(loop, EVIO_BREAK_ALL);
+}
+
+// GCOVR_EXCL_START
+static void dummy_cb(evio_loop *loop, evio_base *base, evio_mask emask) {}
+// GCOVR_EXCL_STOP
 
 TEST(test_evio_clock_gettime_fail)
 {
@@ -19,7 +50,7 @@ TEST(test_evio_clock_gettime_fail)
     assert_non_null(loop);
 
     // Use a test-only abort handler that can free the loop before jumping
-    evio_set_abort(leaking_test_abort_handler, loop);
+    evio_set_abort(leaking_loop_test_abort_handler, loop);
     custom_abort_called = 0;
 
     // Set an invalid clock_id to force clock_gettime() to fail.
@@ -153,16 +184,16 @@ TEST(test_evio_time_update)
     evio_loop_free(loop);
 }
 
-static void break_one_cb(evio_loop *loop, evio_base *w, evio_mask emask)
+static void break_one_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    size_t *counter = w->data;
+    size_t *counter = base->data;
     ++(*counter);
 
     evio_break(loop, EVIO_BREAK_ONE);
 }
-static void break_all_cb(evio_loop *loop, evio_base *w, evio_mask emask)
+static void break_all_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    size_t *counter = w->data;
+    size_t *counter = base->data;
     ++(*counter);
 
     evio_break(loop, EVIO_BREAK_ALL);
@@ -170,9 +201,9 @@ static void break_all_cb(evio_loop *loop, evio_base *w, evio_mask emask)
 
 static evio_idle break_all_watcher;
 
-static void nested_run_trigger_cb(evio_loop *loop, evio_base *w, evio_mask emask)
+static void nested_run_trigger_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    size_t *counter = w->data;
+    size_t *counter = base->data;
     ++(*counter);
 
     // Start the watcher that will break out of all loops. Using an idle watcher
@@ -191,12 +222,12 @@ TEST(test_evio_break_one)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare w;
-    evio_prepare_init(&w, break_one_cb);
-    evio_prepare_start(loop, &w);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, break_one_cb);
+    evio_prepare_start(loop, &prepare);
 
     size_t counter = 0;
-    w.data = &counter;
+    prepare.data = &counter;
 
     // evio_run should execute one iteration, then break.
     int active = evio_run(loop, EVIO_RUN_DEFAULT);
@@ -208,7 +239,7 @@ TEST(test_evio_break_one)
     assert_int_equal(counter, 2);
     assert_true(active);
 
-    evio_prepare_stop(loop, &w);
+    evio_prepare_stop(loop, &prepare);
     evio_loop_free(loop);
 }
 
@@ -277,19 +308,20 @@ TEST(test_evio_invoke_assert_null_cb)
 
 TEST(test_evio_invoke)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare w;
-    evio_prepare_init(&w, generic_cb);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, generic_cb);
+    prepare.data = &data;
 
-    assert_int_equal(generic_cb_called, 0);
-    evio_invoke(loop, &w.base, EVIO_PREPARE);
-    assert_int_equal(generic_cb_called, 1);
-    assert_int_equal(generic_cb_emask, EVIO_PREPARE);
+    assert_int_equal(data.called, 0);
+    evio_invoke(loop, &prepare.base, EVIO_PREPARE);
+    assert_int_equal(data.called, 1);
+    assert_int_equal(data.emask, EVIO_PREPARE);
 
-    evio_prepare_stop(loop, &w);
+    evio_prepare_stop(loop, &prepare);
     evio_loop_free(loop);
 }
 
@@ -323,7 +355,7 @@ TEST(test_evio_ref_overflow_abort)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_set_abort(leaking_test_abort_handler, loop);
+    evio_set_abort(leaking_loop_test_abort_handler, loop);
     custom_abort_called = 0;
 
     // Manually set refcount to its maximum value to test overflow.
@@ -347,7 +379,7 @@ TEST(test_evio_loop_unref_abort)
     assert_non_null(loop);
     assert_int_equal(evio_refcount(loop), 0);
 
-    evio_set_abort(leaking_test_abort_handler, loop);
+    evio_set_abort(leaking_loop_test_abort_handler, loop);
     custom_abort_called = 0;
 
     if (setjmp(abort_jmp_buf) == 0) {
@@ -366,35 +398,35 @@ TEST(test_evio_loop_free_all_lists)
 
     // Start one of each list-based watcher to ensure their lists are allocated
     evio_idle idle;
-    evio_idle_init(&idle, generic_cb);
+    evio_idle_init(&idle, dummy_cb);
     evio_idle_start(loop, &idle);
 
     evio_async async;
-    evio_async_init(&async, generic_cb);
+    evio_async_init(&async, dummy_cb);
     evio_async_start(loop, &async);
 
     evio_prepare prepare;
-    evio_prepare_init(&prepare, generic_cb);
+    evio_prepare_init(&prepare, dummy_cb);
     evio_prepare_start(loop, &prepare);
 
     evio_check check;
-    evio_check_init(&check, generic_cb);
+    evio_check_init(&check, dummy_cb);
     evio_check_start(loop, &check);
 
     evio_cleanup cleanup;
-    evio_cleanup_init(&cleanup, generic_cb);
+    evio_cleanup_init(&cleanup, dummy_cb);
     evio_cleanup_start(loop, &cleanup);
 
     int fds[2] = { -1, -1 };
     assert_int_equal(pipe(fds), 0);
 
     evio_once once;
-    evio_once_init(&once, generic_cb, fds[0], EVIO_READ);
+    evio_once_init(&once, dummy_cb, fds[0], EVIO_READ);
     evio_once_start(loop, &once, 100);
 
     // Also need a plain poll watcher to allocate loop->fds
     evio_poll io;
-    evio_poll_init(&io, generic_cb, fds[1], EVIO_READ);
+    evio_poll_init(&io, dummy_cb, fds[1], EVIO_READ);
     evio_poll_start(loop, &io);
 
     // Freeing the loop should clean up all internal lists.
@@ -407,35 +439,38 @@ TEST(test_evio_loop_free_all_lists)
 
 TEST(test_evio_run_break_all_set)
 {
-    reset_cb_state();
+    size_t break_cb_called = 0;
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare breaker;
-    evio_prepare_init(&breaker, break_cb);
-    evio_prepare_start(loop, &breaker);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, break_cb);
+    prepare.data = &break_cb_called;
+    evio_prepare_start(loop, &prepare);
 
-    evio_check checker;
-    evio_check_init(&checker, generic_cb);
-    evio_check_start(loop, &checker);
+    evio_check check;
+    evio_check_init(&check, generic_cb);
+    check.data = &data;
+    evio_check_start(loop, &check);
 
     // Loop should run the prepare callback, which sets break, and then exit
     // without running the check callback.
     evio_run(loop, EVIO_RUN_DEFAULT);
 
     assert_int_equal(break_cb_called, 1);
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
-    evio_prepare_stop(loop, &breaker);
-    evio_check_stop(loop, &checker);
+    evio_prepare_stop(loop, &prepare);
+    evio_check_stop(loop, &check);
     evio_loop_free(loop);
 }
 
-static void repeating_timer_cb(evio_loop *loop, evio_base *w, evio_mask emask)
+static void repeating_timer_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    size_t *counter = w->data;
+    size_t *counter = base->data;
     if (++(*counter) >= 3) {
-        evio_timer *tm = (evio_timer *)w;
+        evio_timer *tm = (evio_timer *)base;
         evio_timer_stop(loop, tm);
     }
 }
@@ -462,18 +497,18 @@ TEST(test_evio_run_default_looping)
     evio_loop_free(loop);
 }
 
-static void pending_and_no_ref_cb(evio_loop *loop, evio_base *w, evio_mask emask)
+static void pending_and_no_ref_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    size_t *counter = w->data;
+    size_t *counter = base->data;
     if (++(*counter) == 1) {
         // Stop myself, making refcount 0
-        evio_prepare_stop(loop, (evio_prepare *)w);
+        evio_prepare_stop(loop, (evio_prepare *)base);
         assert_int_equal(evio_refcount(loop), 0);
 
         // Queue an event for myself (I am inactive now).
         // Use internal queue_event to bypass the 'active' check and create
         // the test condition: refcount=0, pending>0.
-        evio_queue_event(loop, w, EVIO_PREPARE);
+        evio_queue_event(loop, base, EVIO_PREPARE);
         assert_int_equal(evio_pending_count(loop), 1);
 
         // Break the loop so we can check the return value of evio_run
@@ -486,13 +521,13 @@ TEST(test_evio_run_return_pending)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare w;
-    evio_prepare_init(&w, pending_and_no_ref_cb);
-    evio_prepare_start(loop, &w);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, pending_and_no_ref_cb);
+    evio_prepare_start(loop, &prepare);
     assert_int_equal(evio_refcount(loop), 1);
 
     size_t counter = 0;
-    w.data = &counter;
+    prepare.data = &counter;
 
     // evio_run will call the callback. The callback stops the watcher, queues
     // another event, and breaks. The draining invoke_pending will immediately
@@ -513,17 +548,17 @@ TEST(test_evio_run_return_pending)
     assert_int_equal(counter, 2);
     assert_int_equal(evio_pending_count(loop), 0);
 
-    evio_prepare_stop(loop, &w);
+    evio_prepare_stop(loop, &prepare);
     evio_loop_free(loop);
 }
 
-static void break_and_pending_cb(evio_loop *loop, evio_base *w, evio_mask emask)
+static void break_and_pending_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    size_t *counter = w->data;
+    size_t *counter = base->data;
     // Only do this on the first call to avoid infinite loop in test
     if (++(*counter) == 1) {
         // Queue another event for myself. It will be processed in the next iteration.
-        evio_feed_event(loop, w, EVIO_PREPARE);
+        evio_feed_event(loop, base, EVIO_PREPARE);
         assert_int_equal(evio_pending_count(loop), 1);
         evio_break(loop, EVIO_BREAK_ONE);
     }
@@ -534,13 +569,13 @@ TEST(test_evio_run_return_ref_and_pending)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare w;
-    evio_prepare_init(&w, break_and_pending_cb);
-    evio_prepare_start(loop, &w);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, break_and_pending_cb);
+    evio_prepare_start(loop, &prepare);
     assert_int_equal(evio_refcount(loop), 1);
 
     size_t counter = 0;
-    w.data = &counter;
+    prepare.data = &counter;
 
     // The callback will be called once. It queues another event for itself
     // and then breaks. The draining invoke_pending will immediately process
@@ -559,29 +594,33 @@ TEST(test_evio_run_return_ref_and_pending)
     evio_invoke_pending(loop);
     assert_int_equal(counter, 2);
 
-    evio_prepare_stop(loop, &w);
+    evio_prepare_stop(loop, &prepare);
     evio_loop_free(loop);
 }
 
-static void break_extra_flags_cb(evio_loop *loop, evio_base *w, evio_mask emask)
+static void break_extra_flags_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    generic_cb_called++;
+    size_t *counter = base->data;
+    (*counter)++;
+
     evio_break(loop, EVIO_BREAK_ONE | 0xff00);
 }
 
 TEST(test_evio_break_extra_flags)
 {
-    reset_cb_state();
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare w;
-    evio_prepare_init(&w, break_extra_flags_cb);
-    evio_prepare_start(loop, &w);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, break_extra_flags_cb);
+    evio_prepare_start(loop, &prepare);
+
+    size_t counter = 0;
+    prepare.data = &counter;
 
     int active = evio_run(loop, EVIO_RUN_DEFAULT);
 
-    assert_int_equal(generic_cb_called, 1);
+    assert_int_equal(counter, 1);
     // evio_break() masks the state with (EVIO_BREAK_ONE | EVIO_BREAK_ALL),
     // so the internal state becomes EVIO_BREAK_ONE.
     // evio_run() then consumes this state and resets it to EVIO_BREAK_CANCEL
@@ -589,44 +628,44 @@ TEST(test_evio_break_extra_flags)
     assert_int_equal(evio_break_state(loop), EVIO_BREAK_CANCEL);
     assert_true(active); // watcher is still active
 
-    evio_prepare_stop(loop, &w);
+    evio_prepare_stop(loop, &prepare);
     evio_loop_free(loop);
 }
 
-static evio_prepare p_level1, p_level2, p_level3, p_level1_sibling;
+static evio_prepare prepare_l1, prepare_l2, prepare_l3, prepare_l1_sibling;
 static size_t level1_cb_called = 0;
 static size_t level2_cb_called = 0;
 static size_t level3_cb_called = 0;
 static size_t level1_sibling_cb_called = 0;
 
 // Level 1: Queues level 2 event and makes a nested call to invoke_pending.
-static void nested_cb_level1(evio_loop *loop, evio_base *w, evio_mask emask)
+static void nested_cb_level1(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     level1_cb_called++;
-    evio_prepare_stop(loop, (evio_prepare *)w);
-    evio_feed_event(loop, &p_level2.base, EVIO_PREPARE);
+    evio_prepare_stop(loop, (evio_prepare *)base);
+    evio_feed_event(loop, &prepare_l2.base, EVIO_PREPARE);
 }
 
 // Sibling to Level 1.
-static void nested_cb_level1_sibling(evio_loop *loop, evio_base *w, evio_mask emask)
+static void nested_cb_level1_sibling(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    evio_prepare_stop(loop, (evio_prepare *)w);
     level1_sibling_cb_called++;
+    evio_prepare_stop(loop, (evio_prepare *)base);
 }
 
 // Level 2: Queues level 3 event.
-static void nested_cb_level2(evio_loop *loop, evio_base *w, evio_mask emask)
+static void nested_cb_level2(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     level2_cb_called++;
-    evio_prepare_stop(loop, (evio_prepare *)w);
-    evio_feed_event(loop, &p_level3.base, EVIO_PREPARE);
+    evio_prepare_stop(loop, (evio_prepare *)base);
+    evio_feed_event(loop, &prepare_l3.base, EVIO_PREPARE);
 }
 
 // Level 3: The innermost callback. It just marks that it was called.
-static void nested_cb_level3(evio_loop *loop, evio_base *w, evio_mask emask)
+static void nested_cb_level3(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    evio_prepare_stop(loop, (evio_prepare *)w);
     level3_cb_called++;
+    evio_prepare_stop(loop, (evio_prepare *)base);
 }
 
 TEST(test_evio_nested_invoke_no_stealing)
@@ -641,19 +680,19 @@ TEST(test_evio_nested_invoke_no_stealing)
     assert_non_null(loop);
 
     // Init all watchers
-    evio_prepare_init(&p_level1, nested_cb_level1);
-    evio_prepare_init(&p_level2, nested_cb_level2);
-    evio_prepare_init(&p_level3, nested_cb_level3);
-    evio_prepare_init(&p_level1_sibling, nested_cb_level1_sibling);
+    evio_prepare_init(&prepare_l1, nested_cb_level1);
+    evio_prepare_init(&prepare_l2, nested_cb_level2);
+    evio_prepare_init(&prepare_l3, nested_cb_level3);
+    evio_prepare_init(&prepare_l1_sibling, nested_cb_level1_sibling);
 
-    evio_prepare_start(loop, &p_level1);
-    evio_prepare_start(loop, &p_level2);
-    evio_prepare_start(loop, &p_level3);
-    evio_prepare_start(loop, &p_level1_sibling);
+    evio_prepare_start(loop, &prepare_l1);
+    evio_prepare_start(loop, &prepare_l2);
+    evio_prepare_start(loop, &prepare_l3);
+    evio_prepare_start(loop, &prepare_l1_sibling);
 
     // Queue two events in the initial buffer.
-    evio_feed_event(loop, &p_level1_sibling.base, EVIO_PREPARE);
-    evio_feed_event(loop, &p_level1.base, EVIO_PREPARE);
+    evio_feed_event(loop, &prepare_l1_sibling.base, EVIO_PREPARE);
+    evio_feed_event(loop, &prepare_l1.base, EVIO_PREPARE);
 
     // The single call to invoke_pending should drain the entire chain of events.
     evio_invoke_pending(loop);
@@ -669,10 +708,10 @@ TEST(test_evio_nested_invoke_no_stealing)
     level3_cb_called = 0;
     level1_sibling_cb_called = 0;
 
-    evio_prepare_start(loop, &p_level1);
-    evio_prepare_start(loop, &p_level2);
-    evio_prepare_start(loop, &p_level3);
-    evio_prepare_start(loop, &p_level1_sibling);
+    evio_prepare_start(loop, &prepare_l1);
+    evio_prepare_start(loop, &prepare_l2);
+    evio_prepare_start(loop, &prepare_l3);
+    evio_prepare_start(loop, &prepare_l1_sibling);
 
     // The same test but with evio_run.
     evio_run(loop, EVIO_RUN_DEFAULT);
@@ -688,7 +727,7 @@ TEST(test_evio_nested_invoke_no_stealing)
 
 TEST(test_evio_timeout_idle_coverage)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -697,12 +736,13 @@ TEST(test_evio_timeout_idle_coverage)
     // for timeout purposes. This should cause evio_timeout() to return 0.
     evio_idle idle;
     evio_idle_init(&idle, generic_cb);
+    idle.data = &data;
     evio_idle_start(loop, &idle);
     evio_unref(loop); // Manually unref to make refcount 0 for timeout calculation.
 
     // This will run, call evio_timeout() which returns 0, and run the idle cb.
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 1);
+    assert_int_equal(data.called, 1);
 
     evio_loop_free(loop);
 }
@@ -726,9 +766,9 @@ TEST(test_evio_run_event_pending_no_events)
     evio_loop_free(loop);
 }
 
-static void reentrant_cb(evio_loop *loop, evio_base *w, evio_mask emask)
+static void reentrant_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    size_t *counter = w->data;
+    size_t *counter = base->data;
     ++(*counter);
 
     // Make a nested call. It should be able to process events.
@@ -738,7 +778,7 @@ static void reentrant_cb(evio_loop *loop, evio_base *w, evio_mask emask)
     // This will be added to the alternate pending queue and processed by the
     // outer `evio_invoke_pending`'s `for(;;)` loop after this callback returns.
     if (*counter < 2) {
-        evio_feed_event(loop, w, EVIO_PREPARE);
+        evio_feed_event(loop, base, EVIO_PREPARE);
     }
 }
 
@@ -747,14 +787,14 @@ TEST(test_evio_invoke_pending_reentrancy)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare w;
-    evio_prepare_init(&w, reentrant_cb);
-    evio_prepare_start(loop, &w);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, reentrant_cb);
+    evio_prepare_start(loop, &prepare);
 
     size_t counter = 0;
-    w.data = &counter;
+    prepare.data = &counter;
 
-    evio_feed_event(loop, &w.base, EVIO_PREPARE);
+    evio_feed_event(loop, &prepare.base, EVIO_PREPARE);
 
     // The single call to invoke_pending should trigger a chain of two callbacks.
     evio_invoke_pending(loop);
@@ -763,7 +803,7 @@ TEST(test_evio_invoke_pending_reentrancy)
     assert_int_equal(evio_pending_count(loop), 0);
     assert_int_equal(evio_refcount(loop), 1); // watcher is still active
 
-    evio_prepare_stop(loop, &w);
+    evio_prepare_stop(loop, &prepare);
     evio_loop_free(loop);
 }
 
@@ -773,24 +813,24 @@ TEST(test_evio_invoke_pending_reentrancy)
 // can lead to stack exhaustion in real-world scenarios. A safety limit is
 // used here to prevent the test itself from crashing.
 #define RECURSION_LIMIT 20
-static evio_prepare p_flaw1, p_flaw2;
+static evio_prepare prepare_flaw1, prepare_flaw2;
 static size_t flaw_cb1_called = 0;
 static size_t flaw_cb2_called = 0;
 
-static void flaw_cb1(evio_loop *loop, evio_base *w, evio_mask emask)
+static void flaw_cb1(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     flaw_cb1_called++;
-    evio_feed_event(loop, &p_flaw2.base, EVIO_PREPARE);
+    evio_feed_event(loop, &prepare_flaw2.base, EVIO_PREPARE);
     // This re-entrant call immediately processes the new events,
     // leading to deep recursion.
     evio_invoke_pending(loop);
 }
 
-static void flaw_cb2(evio_loop *loop, evio_base *w, evio_mask emask)
+static void flaw_cb2(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     flaw_cb2_called++;
     if (flaw_cb1_called < RECURSION_LIMIT) {
-        evio_feed_event(loop, &p_flaw1.base, EVIO_PREPARE);
+        evio_feed_event(loop, &prepare_flaw1.base, EVIO_PREPARE);
     }
 }
 
@@ -805,13 +845,13 @@ TEST(test_evio_invoke_pending_recursion)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare_init(&p_flaw1, flaw_cb1);
-    evio_prepare_start(loop, &p_flaw1);
+    evio_prepare_init(&prepare_flaw1, flaw_cb1);
+    evio_prepare_start(loop, &prepare_flaw1);
 
-    evio_prepare_init(&p_flaw2, flaw_cb2);
-    evio_prepare_start(loop, &p_flaw2);
+    evio_prepare_init(&prepare_flaw2, flaw_cb2);
+    evio_prepare_start(loop, &prepare_flaw2);
 
-    evio_feed_event(loop, &p_flaw1.base, EVIO_PREPARE);
+    evio_feed_event(loop, &prepare_flaw1.base, EVIO_PREPARE);
     evio_invoke_pending(loop);
 
     evio_loop_free(loop);
@@ -824,28 +864,28 @@ TEST(test_evio_invoke_pending_recursion)
 
 // This test demonstrates the depth-first event processing order that results
 // from the re-entrant nature of evio_invoke_pending.
-static evio_prepare p_reentrant_A, p_reentrant_B, p_reentrant_C;
+static evio_prepare prepare_A, prepare_B, prepare_C;
 static char execution_order[4];
 static size_t execution_idx;
 
-static void reentrant_cb_A(evio_loop *loop, evio_base *w, evio_mask emask)
+static void reentrant_cb_A(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     execution_order[execution_idx++] = 'A';
 
     // Queue event C
-    evio_feed_event(loop, &p_reentrant_C.base, EVIO_PREPARE);
+    evio_feed_event(loop, &prepare_C.base, EVIO_PREPARE);
 
     // Re-entrant call. Without a guard, this will process C immediately,
     // before B gets a chance.
     evio_invoke_pending(loop);
 }
 
-static void reentrant_cb_B(evio_loop *loop, evio_base *w, evio_mask emask)
+static void reentrant_cb_B(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     execution_order[execution_idx++] = 'B';
 }
 
-static void reentrant_cb_C(evio_loop *loop, evio_base *w, evio_mask emask)
+static void reentrant_cb_C(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     execution_order[execution_idx++] = 'C';
 }
@@ -860,17 +900,17 @@ TEST(test_evio_invoke_pending_depth_first_order)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare_init(&p_reentrant_A, reentrant_cb_A);
-    evio_prepare_init(&p_reentrant_B, reentrant_cb_B);
-    evio_prepare_init(&p_reentrant_C, reentrant_cb_C);
+    evio_prepare_init(&prepare_A, reentrant_cb_A);
+    evio_prepare_init(&prepare_B, reentrant_cb_B);
+    evio_prepare_init(&prepare_C, reentrant_cb_C);
 
-    evio_prepare_start(loop, &p_reentrant_A);
-    evio_prepare_start(loop, &p_reentrant_B);
-    evio_prepare_start(loop, &p_reentrant_C);
+    evio_prepare_start(loop, &prepare_A);
+    evio_prepare_start(loop, &prepare_B);
+    evio_prepare_start(loop, &prepare_C);
 
     // Queue A and B.
-    evio_feed_event(loop, &p_reentrant_B.base, EVIO_PREPARE);
-    evio_feed_event(loop, &p_reentrant_A.base, EVIO_PREPARE);
+    evio_feed_event(loop, &prepare_B.base, EVIO_PREPARE);
+    evio_feed_event(loop, &prepare_A.base, EVIO_PREPARE);
 
     evio_invoke_pending(loop);
     evio_loop_free(loop);

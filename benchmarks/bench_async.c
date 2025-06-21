@@ -19,9 +19,9 @@ typedef struct {
     pthread_cond_t cond;
 } evio_async_ctx;
 
-static void evio_async_cb(evio_loop *loop, evio_base *w, evio_mask emask)
+static void evio_async_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    evio_async_ctx *ctx = w->data;
+    evio_async_ctx *ctx = base->data;
     pthread_mutex_lock(&ctx->mutex);
     ctx->count++;
     if (ctx->count == NUM_PINGS) {

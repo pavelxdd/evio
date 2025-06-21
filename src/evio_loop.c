@@ -116,7 +116,9 @@ void evio_loop_free(evio_loop *loop)
         close(loop->event.fd);
     }
 
-    close(loop->fd);
+    if (loop->fd >= 0) {
+        close(loop->fd);
+    }
 
     for (size_t i = loop->fds.count; i--;) {
         evio_fds *fds = &loop->fds.ptr[i];

@@ -1,5 +1,21 @@
 #include "test.h"
 
+typedef struct {
+    size_t called;
+    evio_mask emask;
+} generic_cb_data;
+
+static void generic_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    generic_cb_data *data = base->data;
+    data->called++;
+    data->emask = emask;
+}
+
+// GCOVR_EXCL_START
+static void dummy_cb(evio_loop *loop, evio_base *base, evio_mask emask) {}
+// GCOVR_EXCL_STOP
+
 // Helper to mimic evio_poll_start's fd table management
 static void prepare_fd_for_loop(evio_loop *loop, int fd)
 {
@@ -14,12 +30,13 @@ static void prepare_fd_for_loop(evio_loop *loop, int fd)
 
 TEST(test_evio_clear_pending)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
     evio_prepare prepare;
     evio_prepare_init(&prepare, generic_cb);
+    prepare.data = &data;
     evio_prepare_start(loop, &prepare);
 
     assert_int_equal(evio_pending_count(loop), 0);
@@ -35,11 +52,11 @@ TEST(test_evio_clear_pending)
     // Since the pending event was cleared, invoking pending events
     // should do nothing.
     evio_invoke_pending(loop);
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     // However, running the loop will trigger the prepare watcher normally.
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 1);
+    assert_int_equal(data.called, 1);
 
     evio_prepare_stop(loop, &prepare);
     evio_loop_free(loop);
@@ -47,75 +64,84 @@ TEST(test_evio_clear_pending)
 
 TEST(test_evio_core_clear_pending_middle)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare p1, p2, p3;
-    evio_prepare_init(&p1, generic_cb);
-    evio_prepare_init(&p2, generic_cb);
-    evio_prepare_init(&p3, generic_cb);
-    evio_prepare_start(loop, &p1);
-    evio_prepare_start(loop, &p2);
-    evio_prepare_start(loop, &p3);
+    evio_prepare prepare1;
+    evio_prepare_init(&prepare1, generic_cb);
+    prepare1.data = &data;
+    evio_prepare_start(loop, &prepare1);
 
-    evio_feed_event(loop, &p1.base, EVIO_PREPARE);
-    evio_feed_event(loop, &p2.base, EVIO_PREPARE);
-    evio_feed_event(loop, &p3.base, EVIO_PREPARE);
+    evio_prepare prepare2;
+    evio_prepare_init(&prepare2, generic_cb);
+    prepare2.data = &data;
+    evio_prepare_start(loop, &prepare2);
+
+    evio_prepare prepare3;
+    evio_prepare_init(&prepare3, generic_cb);
+    prepare3.data = &data;
+    evio_prepare_start(loop, &prepare3);
+
+    evio_feed_event(loop, &prepare1.base, EVIO_PREPARE);
+    evio_feed_event(loop, &prepare2.base, EVIO_PREPARE);
+    evio_feed_event(loop, &prepare3.base, EVIO_PREPARE);
     assert_int_equal(evio_pending_count(loop), 3);
 
     // Clear the middle one. This will swap with the last one.
-    evio_clear_pending(loop, &p2.base);
+    evio_clear_pending(loop, &prepare2.base);
     assert_int_equal(evio_pending_count(loop), 2);
 
     evio_invoke_pending(loop);
-    // p1 and p3's callbacks should be called.
-    assert_int_equal(generic_cb_called, 2);
+    // prepare1 and prepare3's callbacks should be called.
+    assert_int_equal(data.called, 2);
 
-    evio_prepare_stop(loop, &p1);
-    evio_prepare_stop(loop, &p2);
-    evio_prepare_stop(loop, &p3);
+    evio_prepare_stop(loop, &prepare1);
+    evio_prepare_stop(loop, &prepare2);
+    evio_prepare_stop(loop, &prepare3);
     evio_loop_free(loop);
 }
 
 TEST(test_evio_core_requeue)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
 
-    evio_prepare w;
-    evio_prepare_init(&w, generic_cb);
-    evio_prepare_start(loop, &w);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, generic_cb);
+    prepare.data = &data;
+    evio_prepare_start(loop, &prepare);
 
     // Queue event twice for same watcher before invoking
-    evio_feed_event(loop, &w.base, EVIO_PREPARE);
+    evio_feed_event(loop, &prepare.base, EVIO_PREPARE);
     assert_int_equal(evio_pending_count(loop), 1);
 
-    evio_feed_event(loop, &w.base, EVIO_PREPARE);
+    evio_feed_event(loop, &prepare.base, EVIO_PREPARE);
     assert_int_equal(evio_pending_count(loop), 1);
 
     evio_invoke_pending(loop);
-    assert_int_equal(generic_cb_called, 1);
+    assert_int_equal(data.called, 1);
 
-    evio_prepare_stop(loop, &w);
+    evio_prepare_stop(loop, &prepare);
     evio_loop_free(loop);
 }
 
 TEST(test_evio_feed_inactive_watcher)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
     evio_prepare prepare;
     evio_prepare_init(&prepare, generic_cb);
+    prepare.data = &data;
     // Watcher is initialized but not started, so it's inactive.
 
     evio_feed_event(loop, &prepare.base, EVIO_PREPARE);
     assert_int_equal(evio_pending_count(loop), 0);
 
     evio_invoke_pending(loop);
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     evio_loop_free(loop);
 }
@@ -139,7 +165,7 @@ TEST(test_evio_feed_invalid_fd)
 
 TEST(test_evio_queue_fd_events_mask_mismatch)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -148,6 +174,7 @@ TEST(test_evio_queue_fd_events_mask_mismatch)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
 
     // This call to evio_queue_fd_events will be for EVIO_WRITE.
@@ -158,7 +185,7 @@ TEST(test_evio_queue_fd_events_mask_mismatch)
     assert_int_equal(evio_pending_count(loop), 0);
 
     evio_invoke_pending(loop);
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     evio_poll_stop(loop, &io);
     close(fds[0]);
@@ -237,6 +264,7 @@ TEST(test_evio_queue_fd_change_twice)
 
 TEST(test_evio_invalidate_with_pending_change)
 {
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -245,25 +273,25 @@ TEST(test_evio_invalidate_with_pending_change)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
 
-    // 1. Start watcher. This queues a change. fdchanges.count is 1.
+    // Start watcher. This queues a change. fdchanges.count is 1.
     evio_poll_start(loop, &io);
     assert_int_equal(loop->fdchanges.count, 1);
 
-    // 2. Stop the watcher immediately, before the loop runs.
+    // Stop the watcher immediately, before the loop runs.
     // This will call evio_invalidate_fd, which will find the pending change
     // and call evio_flush_fd_change. Since there's only one change,
     // it will hit the `count <= 1` branch and just clear the list.
     evio_poll_stop(loop, &io);
 
-    // 3. After stopping, there should be no pending changes.
+    // After stopping, there should be no pending changes.
     assert_int_equal(loop->fdchanges.count, 0);
     assert_int_equal(evio_refcount(loop), 0);
 
-    // 4. Running the loop should do nothing.
-    reset_cb_state();
+    // Running the loop should do nothing.
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     close(fds[0]);
     close(fds[1]);
@@ -272,6 +300,7 @@ TEST(test_evio_invalidate_with_pending_change)
 
 TEST(test_evio_invalidate_with_pending_error)
 {
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -280,20 +309,20 @@ TEST(test_evio_invalidate_with_pending_error)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
 
     evio_run(loop, EVIO_RUN_NOWAIT); // Process changes so we can queue an error.
 
-    // 1. Queue an error. fderrors.count is 1.
+    // Queue an error. fderrors.count is 1.
     evio_queue_fd_error(loop, fds[0]);
     assert_int_equal(loop->fderrors.count, 1);
 
-    // 2. Stop the watcher.
     // This will call evio_invalidate_fd, which will find the pending error
     // and call evio_flush_fd_error.
     evio_poll_stop(loop, &io);
 
-    // 3. After stopping, there should be no pending errors.
+    // After stopping, there should be no pending errors.
     assert_int_equal(loop->fderrors.count, 0);
     assert_int_equal(evio_refcount(loop), 0);
 
@@ -304,6 +333,7 @@ TEST(test_evio_invalidate_with_pending_error)
 
 TEST(test_evio_flush_fd_change_multiple)
 {
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -314,6 +344,7 @@ TEST(test_evio_flush_fd_change_multiple)
         fds[i][0] = fds[i][1] = -1;
         assert_int_equal(pipe(fds[i]), 0);
         evio_poll_init(&io[i], generic_cb, fds[i][0], EVIO_READ);
+        io[i].data = &data;
         evio_poll_start(loop, &io[i]);
     }
     assert_int_equal(loop->fdchanges.count, 3);
@@ -344,6 +375,7 @@ TEST(test_evio_flush_fd_change_multiple)
 
 TEST(test_evio_flush_fd_error_multiple)
 {
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -354,6 +386,7 @@ TEST(test_evio_flush_fd_error_multiple)
         fds[i][0] = fds[i][1] = -1;
         assert_int_equal(pipe(fds[i]), 0);
         evio_poll_init(&io[i], generic_cb, fds[i][0], EVIO_READ);
+        io[i].data = &data;
         evio_poll_start(loop, &io[i]);
     }
     evio_run(loop, EVIO_RUN_NOWAIT); // Process changes.
@@ -389,6 +422,7 @@ TEST(test_evio_flush_fd_error_multiple)
 
 TEST(test_evio_invalidate_fd_ebadf)
 {
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -397,6 +431,7 @@ TEST(test_evio_invalidate_fd_ebadf)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
     evio_run(loop, EVIO_RUN_NOWAIT); // Process ADD to epoll.
 
@@ -433,7 +468,7 @@ TEST(test_evio_invalidate_fd_eperm)
 
 TEST(test_evio_core_invalidate_twice)
 {
-    reset_cb_state();
+    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -442,11 +477,12 @@ TEST(test_evio_core_invalidate_twice)
 
     evio_poll io;
     evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
 
     // Run once to get the fd added to epoll
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     // Trigger an event, so it's in epoll's ready list
     assert_int_equal(write(fds[1], "x", 1), 1);
@@ -464,7 +500,7 @@ TEST(test_evio_core_invalidate_twice)
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     // No callback should be called because we stopped the watcher.
-    assert_int_equal(generic_cb_called, 0);
+    assert_int_equal(data.called, 0);
 
     close(fds[0]);
     close(fds[1]);
@@ -551,36 +587,36 @@ TEST(test_evio_core_asserts_consistency)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare w;
-    evio_prepare_init(&w, generic_cb);
-    evio_prepare_start(loop, &w);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, dummy_cb);
+    evio_prepare_start(loop, &prepare);
 
     // Test evio_queue_event consistency asserts
-    evio_feed_event(loop, &w.base, EVIO_PREPARE);
-    assert_true(w.base.pending > 0);
-    size_t original_pending = w.base.pending;
-    w.base.pending = 999; // Corrupt pending state
-    expect_assert_failure(evio_queue_event(loop, &w.base, EVIO_PREPARE));
-    w.base.pending = original_pending;
-    evio_clear_pending(loop, &w.base);
+    evio_feed_event(loop, &prepare.base, EVIO_PREPARE);
+    assert_true(prepare.base.pending > 0);
+    size_t original_pending = prepare.base.pending;
+    prepare.base.pending = 999; // Corrupt pending state
+    expect_assert_failure(evio_queue_event(loop, &prepare.base, EVIO_PREPARE));
+    prepare.base.pending = original_pending;
+    evio_clear_pending(loop, &prepare.base);
 
     // Test evio_clear_pending consistency asserts
-    evio_feed_event(loop, &w.base, EVIO_PREPARE);
-    assert_true(w.base.pending > 0);
-    original_pending = w.base.pending;
-    w.base.pending = 999; // Corrupt pending state
-    expect_assert_failure(evio_clear_pending(loop, &w.base));
-    w.base.pending = original_pending;
+    evio_feed_event(loop, &prepare.base, EVIO_PREPARE);
+    assert_true(prepare.base.pending > 0);
+    original_pending = prepare.base.pending;
+    prepare.base.pending = 999; // Corrupt pending state
+    expect_assert_failure(evio_clear_pending(loop, &prepare.base));
+    prepare.base.pending = original_pending;
 
-    evio_pending_list *pending = &loop->pending[(w.base.pending - 1) & 1];
-    size_t index = (w.base.pending - 1) >> 1;
+    evio_pending_list *pending = &loop->pending[(prepare.base.pending - 1) & 1];
+    size_t index = (prepare.base.pending - 1) >> 1;
     evio_base *original_base = pending->ptr[index].base;
     pending->ptr[index].base = NULL; // Corrupt base pointer in pending queue
-    expect_assert_failure(evio_clear_pending(loop, &w.base));
+    expect_assert_failure(evio_clear_pending(loop, &prepare.base));
     pending->ptr[index].base = original_base;
-    evio_clear_pending(loop, &w.base);
+    evio_clear_pending(loop, &prepare.base);
 
-    evio_prepare_stop(loop, &w);
+    evio_prepare_stop(loop, &prepare);
     evio_loop_free(loop);
 }
 
@@ -589,14 +625,14 @@ TEST(test_evio_core_asserts_invoke)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_prepare w;
-    evio_prepare_init(&w, generic_cb);
-    evio_prepare_start(loop, &w);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, dummy_cb);
+    evio_prepare_start(loop, &prepare);
 
     // Test evio_invoke_pending consistency assert
-    evio_feed_event(loop, &w.base, EVIO_PREPARE);
-    assert_true(w.base.pending > 0);
-    w.base.pending = 999;
+    evio_feed_event(loop, &prepare.base, EVIO_PREPARE);
+    assert_true(prepare.base.pending > 0);
+    prepare.base.pending = 999;
     expect_assert_failure(evio_invoke_pending(loop));
 
     evio_loop_free(loop);

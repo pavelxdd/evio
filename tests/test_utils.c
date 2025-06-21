@@ -1,5 +1,22 @@
 #include "test.h"
 
+static jmp_buf abort_jmp_buf;
+static size_t custom_abort_called;
+
+static FILE *custom_abort_handler(void *ctx)
+{
+    custom_abort_called++;
+    longjmp(abort_jmp_buf, 1);
+    return NULL; // GCOVR_EXCL_LINE
+}
+
+static jmp_buf test_abort_jmp_buf;
+
+static void test_abort_func(void)
+{
+    longjmp(test_abort_jmp_buf, 1);
+}
+
 TEST(test_evio_strerror_valid)
 {
     char buf[EVIO_STRERROR_SIZE];

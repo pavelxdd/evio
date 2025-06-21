@@ -2,6 +2,28 @@
 
 #include <sys/resource.h>
 
+static jmp_buf abort_jmp_buf;
+static size_t custom_abort_called;
+
+static FILE *custom_abort_handler(void *ctx)
+{
+    custom_abort_called++;
+    longjmp(abort_jmp_buf, 1);
+    return NULL; // GCOVR_EXCL_LINE
+}
+
+typedef struct {
+    size_t called;
+    evio_mask emask;
+} generic_cb_data;
+
+static void generic_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    generic_cb_data *data = base->data;
+    data->called++;
+    data->emask = emask;
+}
+
 TEST(test_evio_eventfd_init_fail)
 {
     struct rlimit old_lim;
@@ -105,39 +127,44 @@ TEST(test_evio_eventfd_write_pending)
 
 TEST(test_evio_eventfd_cb_async_event)
 {
+    generic_cb_data data1 = { 0 };
+    generic_cb_data data2 = { 0 };
+
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
-    reset_cb_state();
 
-    evio_async w1, w2;
-    evio_async_init(&w1, generic_cb);
-    evio_async_init(&w2, generic_cb2);
-    evio_async_start(loop, &w1);
-    evio_async_start(loop, &w2);
+    evio_async async1;
+    evio_async_init(&async1, generic_cb);
+    async1.data = &data1;
+    evio_async_start(loop, &async1);
 
-    // This will set async_pending and w->status, and wake up loop via eventfd.
-    evio_async_send(loop, &w1);
+    evio_async async2;
+    evio_async_init(&async2, generic_cb);
+    async2.data = &data2;
+    evio_async_start(loop, &async2);
+
+    // This will set async_pending and async1->status, and wake up loop via eventfd.
+    evio_async_send(loop, &async1);
 
     // Simulate loop calling the eventfd callback.
     // This will iterate over both async watchers.
-    // For `w`, the status will be 1 -> event queued (if branch).
-    // For `w2`, the status will be 0 -> no event queued (else branch).
+    // For `async1`, the status will be 1 -> event queued (if branch).
+    // For `async2`, the status will be 0 -> no event queued (else branch).
     evio_eventfd_cb(loop, &loop->event.base, EVIO_READ);
 
-    // The callback should have queued an async event for w1
+    // The callback should have queued an async event for async1
     assert_int_equal(evio_pending_count(loop), 1);
 
     // Invoke pending events
     evio_invoke_pending(loop);
 
-    assert_int_equal(generic_cb_called, 1);
-    assert_int_equal(generic_cb_emask, EVIO_ASYNC);
-    assert_int_equal(generic_cb2_called, 0);
+    assert_int_equal(data1.called, 1);
+    assert_int_equal(data1.emask, EVIO_ASYNC);
+    assert_int_equal(data2.called, 0);
 
-    evio_async_stop(loop, &w1);
-    evio_async_stop(loop, &w2);
+    evio_async_stop(loop, &async1);
+    evio_async_stop(loop, &async2);
     evio_loop_free(loop);
-    reset_cb_state();
 }
 
 TEST(test_evio_eventfd_double_init)

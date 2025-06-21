@@ -15,14 +15,14 @@ void *evio_list_resize(void *ptr, size_t size, size_t count, size_t *total)
     return evio_reallocarray(ptr, *total, size);
 }
 
-void evio_list_start(evio_loop *loop, evio_base *w,
+void evio_list_start(evio_loop *loop, evio_base *base,
                      evio_list *list, bool do_ref)
 {
-    if (__evio_unlikely(w->active)) {
+    if (__evio_unlikely(base->active)) {
         return;
     }
 
-    w->active = ++list->count;
+    base->active = ++list->count;
 
     if (do_ref) {
         evio_ref(loop);
@@ -30,24 +30,24 @@ void evio_list_start(evio_loop *loop, evio_base *w,
 
     list->ptr = evio_list_resize(list->ptr, sizeof(*list->ptr),
                                  list->count, &list->total);
-    list->ptr[w->active - 1] = w;
+    list->ptr[base->active - 1] = base;
 }
 
-void evio_list_stop(evio_loop *loop, evio_base *w,
+void evio_list_stop(evio_loop *loop, evio_base *base,
                     evio_list *list, bool do_ref)
 {
-    evio_clear_pending(loop, w);
+    evio_clear_pending(loop, base);
 
-    if (__evio_unlikely(!w->active)) {
+    if (__evio_unlikely(!base->active)) {
         return;
     }
 
-    list->ptr[w->active - 1] = list->ptr[--list->count];
-    list->ptr[w->active - 1]->active = w->active;
+    list->ptr[base->active - 1] = list->ptr[--list->count];
+    list->ptr[base->active - 1]->active = base->active;
 
     if (do_ref) {
         evio_unref(loop);
     }
 
-    w->active = 0;
+    base->active = 0;
 }
