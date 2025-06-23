@@ -49,6 +49,9 @@ void evio_signal_init(evio_signal *w, evio_cb cb, int signum)
  * @brief Starts a signal watcher, making it active in the event loop.
  * @param loop The event loop.
  * @param w The signal watcher to start.
+ * @warning A specific signal number can only be handled by one event loop at a
+ * time within a single process. Attempting to start a watcher for the same
+ * signal on a different loop will cause the program to abort.
  */
 __evio_public __evio_nonnull(1, 2)
 void evio_signal_start(evio_loop *loop, evio_signal *w);
