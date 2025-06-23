@@ -45,7 +45,7 @@ void evio_signal_queue_events(evio_loop *loop, int signum)
     atomic_store_explicit(&sig->status.value, 0, memory_order_release);
 
     for (size_t i = sig->list.count; i--;) {
-        evio_signal *w = (evio_signal *)(sig->list.ptr[i]);
+        evio_signal *w = container_of(sig->list.ptr[i], evio_signal, base);
         evio_queue_event(loop, &w->base, EVIO_SIGNAL);
     }
 }
@@ -62,7 +62,7 @@ void evio_signal_process_pending(evio_loop *loop)
 
             if (atomic_exchange_explicit(&sig->status.value, 0, memory_order_acq_rel)) {
                 for (size_t j = sig->list.count; j--;) {
-                    evio_signal *w = (evio_signal *)(sig->list.ptr[j]);
+                    evio_signal *w = container_of(sig->list.ptr[j], evio_signal, base);
                     evio_queue_event(loop, &w->base, EVIO_SIGNAL);
                 }
             }

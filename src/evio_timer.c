@@ -83,7 +83,7 @@ void evio_timer_update(evio_loop *loop)
         loop->timer.ptr[0].time <= loop->time
     ) {
         evio_node *node = &loop->timer.ptr[0];
-        evio_timer *w = (evio_timer *)node->base;
+        evio_timer *w = container_of(node->base, evio_timer, base);
 
         evio_queue_event(loop, &w->base, EVIO_TIMER);
 

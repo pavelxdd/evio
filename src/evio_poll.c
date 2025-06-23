@@ -113,7 +113,7 @@ void evio_poll_update(evio_loop *loop)
         fds->flags = 0;
 
         for (size_t i = fds->list.count; i--;) {
-            const evio_poll *w = (evio_poll *)(fds->list.ptr[i]);
+            const evio_poll *w = container_of(fds->list.ptr[i], const evio_poll, base);
             fds->emask |= w->emask;
         }
 

@@ -46,7 +46,7 @@ void evio_queue_fd_events(evio_loop *loop, int fd, evio_mask emask)
     evio_fds *fds = &loop->fds.ptr[fd];
 
     for (size_t i = fds->list.count; i--;) {
-        evio_poll *w = (evio_poll *)(fds->list.ptr[i]);
+        evio_poll *w = container_of(fds->list.ptr[i], evio_poll, base);
         if (w->emask & emask) {
             evio_queue_event(loop, &w->base, EVIO_POLL | (w->emask & emask));
         }
@@ -60,7 +60,7 @@ void evio_queue_fd_errors(evio_loop *loop, int fd)
     evio_fds *fds = &loop->fds.ptr[fd];
 
     for (size_t i = fds->list.count; i--;) {
-        evio_poll *w = (evio_poll *)(fds->list.ptr[i]);
+        evio_poll *w = container_of(fds->list.ptr[i], evio_poll, base);
         evio_poll_stop(loop, w);
         evio_queue_event(loop, &w->base, EVIO_POLL | EVIO_READ | EVIO_WRITE | EVIO_ERROR);
     }

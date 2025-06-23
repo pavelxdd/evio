@@ -470,7 +470,7 @@ static void repeating_timer_cb(evio_loop *loop, evio_base *base, evio_mask emask
 {
     size_t *counter = base->data;
     if (++(*counter) >= 3) {
-        evio_timer *tm = (evio_timer *)base;
+        evio_timer *tm = container_of(base, evio_timer, base);
         evio_timer_stop(loop, tm);
     }
 }
@@ -502,7 +502,8 @@ static void pending_and_no_ref_cb(evio_loop *loop, evio_base *base, evio_mask em
     size_t *counter = base->data;
     if (++(*counter) == 1) {
         // Stop myself, making refcount 0
-        evio_prepare_stop(loop, (evio_prepare *)base);
+        evio_prepare *w = container_of(base, evio_prepare, base);
+        evio_prepare_stop(loop, w);
         assert_int_equal(evio_refcount(loop), 0);
 
         // Queue an event for myself (I am inactive now).
@@ -642,7 +643,9 @@ static size_t level1_sibling_cb_called = 0;
 static void nested_cb_level1(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     level1_cb_called++;
-    evio_prepare_stop(loop, (evio_prepare *)base);
+
+    evio_prepare *w = container_of(base, evio_prepare, base);
+    evio_prepare_stop(loop, w);
     evio_feed_event(loop, &prepare_l2.base, EVIO_PREPARE);
 }
 
@@ -650,14 +653,18 @@ static void nested_cb_level1(evio_loop *loop, evio_base *base, evio_mask emask)
 static void nested_cb_level1_sibling(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     level1_sibling_cb_called++;
-    evio_prepare_stop(loop, (evio_prepare *)base);
+
+    evio_prepare *w = container_of(base, evio_prepare, base);
+    evio_prepare_stop(loop, w);
 }
 
 // Level 2: Queues level 3 event.
 static void nested_cb_level2(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     level2_cb_called++;
-    evio_prepare_stop(loop, (evio_prepare *)base);
+
+    evio_prepare *w = container_of(base, evio_prepare, base);
+    evio_prepare_stop(loop, w);
     evio_feed_event(loop, &prepare_l3.base, EVIO_PREPARE);
 }
 
@@ -665,7 +672,9 @@ static void nested_cb_level2(evio_loop *loop, evio_base *base, evio_mask emask)
 static void nested_cb_level3(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     level3_cb_called++;
-    evio_prepare_stop(loop, (evio_prepare *)base);
+
+    evio_prepare *w = container_of(base, evio_prepare, base);
+    evio_prepare_stop(loop, w);
 }
 
 TEST(test_evio_nested_invoke_no_stealing)

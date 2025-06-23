@@ -16,7 +16,7 @@ static void generic_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 static void read_and_count_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     char buf[1];
-    evio_poll *io = (evio_poll *)base;
+    evio_poll *io = container_of(base, evio_poll, base);
     read(io->fd, buf, sizeof(buf));
     generic_cb(loop, base, emask);
 }

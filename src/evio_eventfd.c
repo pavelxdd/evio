@@ -94,7 +94,7 @@ void evio_eventfd_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 
     if (atomic_exchange_explicit(&loop->async_pending.value, 0, memory_order_acq_rel)) {
         for (size_t i = loop->async.count; i--;) {
-            evio_async *w = (evio_async *)(loop->async.ptr[i]);
+            evio_async *w = container_of(loop->async.ptr[i], evio_async, base);
 
             if (atomic_exchange_explicit(&w->status.value, 0, memory_order_acq_rel)) {
                 evio_queue_event(loop, &w->base, EVIO_ASYNC);

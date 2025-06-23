@@ -9,9 +9,8 @@
  */
 static void evio_once_poll_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    evio_once *w = (evio_once *)((char *)base - offsetof(evio_once, io.base));
+    evio_once *w = container_of(base, evio_once, io.base);
     evio_once_stop(loop, w);
-
     w->cb(loop, &w->base, EVIO_ONCE | emask);
 }
 
@@ -23,9 +22,8 @@ static void evio_once_poll_cb(evio_loop *loop, evio_base *base, evio_mask emask)
  */
 static void evio_once_timer_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    evio_once *w = (evio_once *)((char *)base - offsetof(evio_once, tm.base));
+    evio_once *w = container_of(base, evio_once, tm.base);
     evio_once_stop(loop, w);
-
     w->cb(loop, &w->base, EVIO_ONCE | emask);
 }
 

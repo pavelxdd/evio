@@ -28,6 +28,18 @@
 
 // IWYU pragma: end_exports
 
+#ifndef container_of
+/**
+ * @brief Expands to an expression for the container of a given struct member.
+ * @param ptr A pointer to the member.
+ * @param type The type of the container struct.
+ * @param member The name of the member within the struct.
+ * @return A pointer to the container struct.
+ */
+#define container_of(ptr, type, member) \
+    ((type *)((char *)(ptr) - offsetof(type, member)))
+#endif
+
 /** @brief The default initial number of events for the epoll buffer. */
 #define EVIO_DEF_EVENTS ((size_t)64)
 /** @brief The maximum number of events the epoll buffer can grow to. */
