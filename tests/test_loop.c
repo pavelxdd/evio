@@ -1,6 +1,7 @@
 #include "test.h"
 
 #include <sys/resource.h>
+#include <sys/wait.h>
 
 static jmp_buf abort_jmp_buf;
 static size_t custom_abort_called;
@@ -927,4 +928,52 @@ TEST(test_evio_invoke_pending_depth_first_order)
     // The re-entrant call in cb_A processes C immediately, before B gets a
     // chance, so the expected depth-first order is "ACB".
     assert_string_equal(execution_order, "ACB");
+}
+
+static void fork_timer_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    int *pipe_fd = base->data;
+    assert_int_equal(write(*pipe_fd, "K", 1), 1);
+    evio_break(loop, EVIO_BREAK_ALL);
+}
+
+TEST(test_evio_fork_safety)
+{
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+
+    pid_t pid = fork();
+    assert_true(pid >= 0);
+
+    if (pid == 0) { // Child process
+        close(fds[0]); // Close read end
+
+        evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+        assert_non_null(loop);
+
+        evio_timer tm;
+        evio_timer_init(&tm, fork_timer_cb, 0);
+        tm.data = &fds[1]; // Pass write end of pipe
+        evio_timer_start(loop, &tm, 0); // Fire immediately
+
+        evio_run(loop, EVIO_RUN_DEFAULT);
+
+        evio_loop_free(loop);
+        close(fds[1]);
+        exit(EXIT_SUCCESS);
+    } else { // Parent process
+        close(fds[1]); // Close write end
+
+        char buf[2] = { 0 };
+        ssize_t nread = read(fds[0], buf, sizeof(buf) - 1);
+        assert_int_equal(nread, 1);
+        assert_string_equal(buf, "K");
+
+        int status;
+        waitpid(pid, &status, 0);
+        assert_true(WIFEXITED(status));
+        assert_int_equal(WEXITSTATUS(status), EXIT_SUCCESS);
+
+        close(fds[0]);
+    }
 }
