@@ -241,6 +241,7 @@ if get_option('examples')
         'check',
         'cleanup',
         'once',
+        'fork',
     ]
 
     examples_target = []

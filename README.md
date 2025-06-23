@@ -214,7 +214,7 @@ The only correct and safe way to use `evio` in a multi-process (pre-fork) server
 1. **Parent Process**: The parent process can create listening sockets but should **not** initialize or run an `evio_loop` that manages them. Its primary role is to `fork()` child processes.
 2. **Child Process**: Each child process must create its own, new `evio_loop` instance after the `fork()` call. It can then add the inherited listening sockets and other file descriptors to this new loop.
 
-This model ensures that each process has a completely independent and valid event loop, avoiding state corruption and unpredictable behavior. Do **not** attempt to "re-initialize" a loop in a child process.
+This model ensures that each process has a completely independent and valid event loop, avoiding state corruption and unpredictable behavior. Do **not** attempt to "re-initialize" a loop in a child process. See `examples/fork.c` for a practical demonstration of this pattern.
 
 ### Re-entrant Event Invocation
 
