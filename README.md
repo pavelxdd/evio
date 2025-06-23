@@ -178,6 +178,14 @@ int main(void)
 }
 ```
 
+## Error Handling
+
+`evio` takes a pragmatic approach to error handling, distinguishing between recoverable setup errors and fatal runtime errors.
+
+- **Recoverable Setup Errors**: Functions that depend on limited system resources, such as `evio_loop_new()`, can fail during initial setup. For example, if no more file descriptors are available, `evio_loop_new()` will return `NULL`. Applications are expected to check for and handle these `NULL` returns gracefully.
+
+- **Unrecoverable Runtime Errors**: By design, `evio` considers certain runtime errors, such as memory allocation failures (e.g., out-of-memory), to be fatal. Instead of returning error codes for every function that might allocate memory, the library will call `EVIO_ABORT`, which by default terminates the program. This design choice simplifies the API significantly by avoiding pervasive error-checking for conditions that are rarely recoverable in practice. This behavior can be customized by providing a custom handler via `evio_set_abort()`.
+
 ## Performance
 
 `evio` is designed with performance as a primary goal.
