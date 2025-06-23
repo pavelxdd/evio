@@ -95,10 +95,20 @@ void evio_queue_fd_errors(evio_loop *loop, int fd)
 
     evio_fds *fds = &loop->fds.ptr[fd];
 
-    for (size_t i = fds->list.count; i--;) {
-        evio_poll *w = container_of(fds->list.ptr[i], evio_poll, base);
-        evio_poll_stop(loop, w);
-        evio_queue_event(loop, &w->base, EVIO_POLL | EVIO_READ | EVIO_WRITE | EVIO_ERROR);
+    while (fds->list.count > 0) {
+        evio_base *base = fds->list.ptr[fds->list.count - 1];
+        evio_poll *w = container_of(base, evio_poll, base);
+
+        EVIO_ASSERT(w->active);
+
+        evio_clear_pending(loop, base);
+
+        fds->list.count--;
+
+        evio_unref(loop);
+        w->active = 0;
+
+        evio_queue_event(loop, base, EVIO_POLL | EVIO_READ | EVIO_WRITE | EVIO_ERROR);
     }
 }
 
@@ -204,7 +214,12 @@ int evio_invalidate_fd(evio_loop *loop, int fd)
         return 0;
     }
 
-    return errno == EPERM ? 0 : -1;
+    int err = errno;
+    if (err == EPERM || err == ENOENT) {
+        return 0;
+    }
+
+    return -1;
 }
 
 void evio_feed_signal(evio_loop *loop, int signum)

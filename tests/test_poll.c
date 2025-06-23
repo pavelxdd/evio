@@ -1413,7 +1413,9 @@ TEST(test_evio_poll_enoent_add_fail)
     evio_loop_free(loop);
 }
 
-TEST(test_evio_poll_stale_event_invalidated)
+// This test covers the case where a stale event arrives after the watcher
+// has been stopped. evio_invalidate_fd will fail with ENOENT and return -1.
+TEST(test_evio_poll_stale_event_after_stop)
 {
     generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
@@ -1431,18 +1433,93 @@ TEST(test_evio_poll_stale_event_invalidated)
     // Trigger an event so it's in the kernel's ready list.
     assert_int_equal(write(fds[1], "x", 1), 1);
 
-    // Stop the watcher, which calls evio_invalidate_fd.
+    // Stop the watcher.
+    // This calls evio_invalidate_fd, which removes the fd from epoll.
     evio_poll_stop(loop, &io);
 
-    // Run the loop. It will process the DEL from the stop action.
-    // It will also get the stale event. The handler will call evio_invalidate_fd,
-    // which will now return 1 (already invalid), hitting the continue.
+    // Run the loop. It will likely get the stale event from epoll_wait.
+    // The handler will call evio_invalidate_fd again. This time it will fail
+    // with ENOENT and return -1. The `if (ret <= 0)` check should catch this
+    // and correctly ignore the event.
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     // No callback should have been called.
     assert_int_equal(data.called, 0);
 
     close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
+// This test covers the case where a stale event arrives for an fd that has
+// no watchers, but is still in epoll. evio_invalidate_fd will succeed and return 0.
+TEST(test_evio_poll_stale_event_clean_del)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+
+    evio_poll io;
+    evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
+    evio_poll_start(loop, &io);
+    evio_run(loop, EVIO_RUN_NOWAIT); // Add to epoll
+
+    // Trigger an event so it's in the kernel's ready list.
+    assert_int_equal(write(fds[1], "x", 1), 1);
+
+    // Manually remove the watcher from the loop's internal lists,
+    // but leave the fd registered in epoll. This creates the state
+    // where a stale event can be processed for an fd with no watchers.
+    loop->fds.ptr[fds[0]].list.count = 0;
+    evio_unref(loop);
+    io.active = 0;
+
+    // Run the loop. epoll_wait will return the stale event.
+    // evio_poll_wait will call evio_invalidate_fd.
+    // Inside evio_invalidate_fd, list.count is 0, and epoll_ctl(DEL) will
+    // succeed, causing it to return 0.
+    // The check `if (evio_invalidate_fd(...) <= 0)` will be true,
+    // and the event will be correctly ignored.
+    evio_run(loop, EVIO_RUN_NOWAIT);
+
+    // No callback should have been called.
+    assert_int_equal(data.called, 0);
+
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_poll_stop_on_closed_fd_asserts)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+
+    evio_poll io;
+    evio_poll_init(&io, dummy_cb, fds[0], EVIO_READ);
+    evio_poll_start(loop, &io);
+
+    // Run once to get the fd registered with epoll.
+    evio_run(loop, EVIO_RUN_NOWAIT);
+
+    // Close the fd before stopping the watcher.
+    close(fds[0]);
+
+    // Stopping the watcher will now try to DEL a closed fd from epoll,
+    // which fails with EBADF. evio_invalidate_fd returns -1, which should
+    // trigger our new assertion.
+    expect_assert_failure(evio_poll_stop(loop, &io));
+
+    // The watcher is still technically active because the stop aborted.
+    // The loop's internal state is now a bit inconsistent, but we just need
+    // to clean up resources.
     close(fds[1]);
     evio_loop_free(loop);
 }

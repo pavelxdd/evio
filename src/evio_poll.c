@@ -52,7 +52,9 @@ void evio_poll_stop(evio_loop *loop, evio_poll *w)
     evio_unref(loop);
     w->active = 0;
 
-    if (evio_invalidate_fd(loop, w->fd) > 0) {
+    int ret = evio_invalidate_fd(loop, w->fd);
+    EVIO_ASSERT(ret >= 0);
+    if (ret > 0) {
         evio_queue_fd_change(loop, w->fd, 0);
     }
 }
@@ -223,11 +225,11 @@ void evio_poll_wait(evio_loop *loop, int timeout)
         if (__evio_unlikely(fds->gen != (ev->data.u64 >> 32))) {
             continue;
         }
+        // GCOVR_EXCL_STOP
 
-        if (!evio_invalidate_fd(loop, fd)) {
+        if (evio_invalidate_fd(loop, fd) <= 0) {
             continue;
         }
-        // GCOVR_EXCL_STOP
 
         evio_mask emask =
             ((ev->events & (EPOLLIN  | EPOLLERR | EPOLLHUP)) ? EVIO_READ   : 0) |

@@ -420,9 +420,8 @@ TEST(test_evio_flush_fd_error_multiple)
     evio_loop_free(loop);
 }
 
-TEST(test_evio_invalidate_fd_ebadf)
+TEST(test_evio_invalidate_fd_enoent)
 {
-    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
@@ -430,19 +429,23 @@ TEST(test_evio_invalidate_fd_ebadf)
     assert_int_equal(pipe(fds), 0);
 
     evio_poll io;
-    evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
-    io.data = &data;
+    evio_poll_init(&io, dummy_cb, fds[0], EVIO_READ);
+
+    // Start the watcher, which queues a change but doesn't add to epoll yet.
     evio_poll_start(loop, &io);
-    evio_run(loop, EVIO_RUN_NOWAIT); // Process ADD to epoll.
+    assert_true(io.active);
+    assert_int_equal(evio_refcount(loop), 1);
 
-    // Close the fd while it is still being watched.
-    close(fds[0]);
-
-    // Stopping the watcher will now call evio_invalidate_fd, which will try
-    // to DEL the closed fd from epoll, resulting in EBADF. This covers
-    // the `errno != EPERM` path in evio_invalidate_fd.
+    // Immediately stop the watcher. The loop hasn't run, so the fd is not
+    // in the epoll set. This will cause epoll_ctl(DEL) to fail with ENOENT,
+    // which evio_invalidate_fd should treat as a success (return 0).
+    // The assertion in evio_poll_stop should not fire.
     evio_poll_stop(loop, &io);
 
+    assert_false(io.active);
+    assert_int_equal(evio_refcount(loop), 0);
+
+    close(fds[0]);
     close(fds[1]);
     evio_loop_free(loop);
 }
