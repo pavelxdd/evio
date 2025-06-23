@@ -26,8 +26,17 @@ evio_time evio_clock_gettime(const evio_loop *loop)
 
 /**
  * @brief Calculates the timeout for the `epoll_pwait` call.
+ * @details This function determines the maximum time the event loop should
+ * block waiting for I/O events.
+ *  - Returns `0` (no wait) if the loop should not block, which occurs if:
+ *    - The loop has no active watchers (`refcount == 0`).
+ *    - An idle watcher is active, which requires the loop to spin.
+ *    - An eventfd notification is pending.
+ *    - The next timer has already expired.
+ *  - Returns `-1` (infinite wait) if there are active watchers but no pending timers.
+ *  - Otherwise, returns the time in milliseconds until the next timer expires.
  * @param loop The event loop.
- * @return The timeout in milliseconds, 0 for no-wait, or -1 for infinite wait.
+ * @return The timeout in milliseconds.
  */
 static int evio_timeout(evio_loop *loop)
 {

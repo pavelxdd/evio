@@ -3,8 +3,11 @@
 
 /**
  * @brief Internal callback for the poll part of a once watcher.
+ * @details This callback is triggered when the I/O event occurs. It stops the
+ * composite `once` watcher (which also stops the associated timer) and then
+ * invokes the user's public callback.
  * @param loop The event loop.
- * @param base The base watcher pointer.
+ * @param base The base watcher pointer of the internal `evio_poll` watcher.
  * @param emask The received event mask.
  */
 static void evio_once_poll_cb(evio_loop *loop, evio_base *base, evio_mask emask)
@@ -16,8 +19,11 @@ static void evio_once_poll_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 
 /**
  * @brief Internal callback for the timer part of a once watcher.
+ * @details This callback is triggered when the timeout expires. It stops the
+ * composite `once` watcher (which also stops the associated poll watcher) and
+ * then invokes the user's public callback.
  * @param loop The event loop.
- * @param base The base watcher pointer.
+ * @param base The base watcher pointer of the internal `evio_timer` watcher.
  * @param emask The received event mask.
  */
 static void evio_once_timer_cb(evio_loop *loop, evio_base *base, evio_mask emask)
