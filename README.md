@@ -220,6 +220,10 @@ This model ensures that each process has a completely independent and valid even
 
 The `evio_invoke_pending(loop)` function, which is called internally by `evio_run()`, is re-entrant. If a watcher callback calls `evio_invoke_pending()` again, it will immediately start processing newly queued events before the original call returns. This results in a depth-first event processing order. While this can be a powerful feature for immediate, nested event handling, developers should be mindful that deep recursion can lead to stack exhaustion.
 
+## Platform Support
+
+`evio` is designed and optimized specifically for **Linux**. It relies on Linux-specific APIs such as `epoll`, `eventfd`, and optionally `io_uring`. It is not designed to be portable and will not compile or run on other operating systems like macOS or Windows.
+
 ## License
 
 This project is licensed under the MIT License.

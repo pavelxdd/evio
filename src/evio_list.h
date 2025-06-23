@@ -2,11 +2,12 @@
 
 /**
  * @file evio_list.h
- * @brief Internal utilities for a lightweight dynamic array (list).
+ * @brief Internal utilities for a lightweight, resizable dynamic array (list).
  *
  * This module provides a simple and efficient way to manage collections of
- * watchers throughout the library, avoiding heavier container abstractions. The
- * utilities handle dynamic resizing and the lifecycle of list-based watchers.
+ * watchers (e.g., idle, check, prepare) throughout the library, avoiding
+ * heavier container abstractions. The utilities handle dynamic resizing and the
+ * addition/removal of watchers from these lists.
  */
 
 #include "evio.h"

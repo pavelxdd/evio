@@ -63,13 +63,14 @@ void evio_once_stop(evio_loop *loop, evio_once *w)
     }
 
     // The ref/unref pairs here prevent the loop from exiting prematurely if
-    // stopping one of the sub-watchers drops the refcount to zero.
+    // stopping one of the sub-watchers drops the refcount to zero before the
+    // `once` watcher itself is stopped.
     evio_ref(loop);
     evio_poll_stop(loop, &w->io);
 
     evio_ref(loop);
     evio_timer_stop(loop, &w->tm);
 
-    // This stops the once watcher and does the final unref.
+    // This stops the once watcher and performs the final unref.
     evio_list_stop(loop, &w->base, &loop->once, true);
 }

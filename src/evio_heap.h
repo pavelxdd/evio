@@ -4,10 +4,11 @@
  * @file evio_heap.h
  * @brief An internal binary min-heap implementation for timer management.
  *
- * The heap stores (time, watcher) pairs, ordered by expiration time, allowing
- * the event loop to efficiently determine the next timeout. A watcher's
- * position in the heap is stored as a 1-based index; a value of 0 indicates
- * that the watcher is not currently in the heap.
+ * The heap stores `evio_node` objects, which are (time, watcher) pairs, ordered
+ * by expiration time. This allows the event loop to efficiently determine the
+ * next timeout for `epoll_pwait`. A watcher's position in the heap is stored as
+ * a 1-based index in its `active` field; a value of 0 indicates that the
+ * watcher is not currently in the heap.
  */
 
 #include "evio.h"

@@ -121,7 +121,7 @@
 typedef uint16_t evio_mask;
 
 /** @brief Event mask values for watchers. */
-enum {
+enum evio_event_mask {
     EVIO_NONE       = 0x000, /**< No event. */
     EVIO_READ       = 0x001, /**< Read readiness on a file descriptor. */
     EVIO_WRITE      = 0x002, /**< Write readiness on a file descriptor. */
@@ -138,20 +138,20 @@ enum {
 };
 
 /** @brief Flags for `evio_loop_new` to customize loop creation. */
-enum {
+enum evio_loop_flags {
     EVIO_FLAG_NONE  = 0x000, /**< Default flags. */
     EVIO_FLAG_URING = 0x001, /**< Use io_uring to optimize `epoll_ctl` syscalls if available. */
 };
 
 /** @brief Flags for `evio_run` to control loop execution. */
-enum {
+enum evio_run_flags {
     EVIO_RUN_DEFAULT    = 0, /**< Run until stopped or no active watchers remain. */
     EVIO_RUN_NOWAIT     = 1, /**< Run one iteration, but do not block for I/O. */
     EVIO_RUN_ONCE       = 2, /**< Run one iteration and block for I/O if needed. */
 };
 
 /** @brief Break states for `evio_break` to control loop termination. */
-enum {
+enum evio_break_state {
     EVIO_BREAK_CANCEL   = 0, /**< Cancel a previous break request. */
     EVIO_BREAK_ONE      = 1, /**< Stop the current `evio_run` call. */
     EVIO_BREAK_ALL      = 2, /**< Stop the current and all nested `evio_run` calls. */
@@ -217,8 +217,9 @@ typedef void (*evio_cb)(evio_loop *loop, evio_base *base, evio_mask emask);
 
 /**
  * @brief Common fields for all watcher base structures.
- * @details This macro defines the core members required by the event loop to
- * manage a watcher. It should be included via the `EVIO_BASE` macro.
+ * @details This internal macro defines the core members required by the event
+ * loop to manage a watcher. It is exposed publicly so that custom watcher
+ * types can be created, though this is an advanced use case.
  */
 #define EVIO_COMMON \
     size_t active;  /**< Non-zero if active, 0 otherwise. */ \
@@ -229,7 +230,8 @@ typedef void (*evio_cb)(evio_loop *loop, evio_base *base, evio_mask emask);
 /**
  * @brief Defines the base structure for all watcher types.
  * @details This macro should be the first member of any watcher struct. It uses
- * a union to allow polymorphic access via an `evio_base*` pointer.
+ * a union to allow polymorphic access via an `evio_base*` pointer, which is
+ * how the library manages different watcher types generically.
  */
 #define EVIO_BASE \
     union { \

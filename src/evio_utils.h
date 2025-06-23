@@ -43,7 +43,7 @@
  *
  * The handler is called by `EVIO_ABORT` and can perform cleanup before the
  * program terminates.
- * @param ctx The user-defined context pointer passed to `evio_set_abort`.
+ * @param ctx The user-defined context pointer provided to `evio_set_abort`.
  * @return A `FILE*` stream (e.g., `stderr`) to which the default abort message
  *         will be written. If `NULL`, the default message is suppressed.
  */
