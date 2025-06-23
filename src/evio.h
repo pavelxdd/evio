@@ -221,11 +221,8 @@ typedef void (*evio_cb)(evio_loop *loop, evio_base *base, evio_mask emask);
  * manage a watcher. It should be included via the `EVIO_BASE` macro.
  */
 #define EVIO_COMMON \
-    size_t active;  /**< 1-based index if active, 0 otherwise. */ \
-    size_t pending; /**< A 1-based index into the pending event queue. \
-                         *   It is 0 if the watcher is not pending. Internally, it also \
-                         *   encodes which of the two pending queues the event is in. \
-                         *   (value = (array_index << 1) + 1 + queue_index) */ \
+    size_t active;  /**< Non-zero if active, 0 otherwise. */ \
+    size_t pending; /**< Non-zero if pending, 0 otherwise. */ \
     void *data;     /**< User-assignable data pointer. */ \
     evio_cb cb;     /**< Watcher's callback function. */
 

@@ -3,11 +3,47 @@
 
 #include "evio_core.h"
 
+/**
+ * @brief Sets the pending state of a watcher.
+ * @details This encodes the pending array index and queue index into the
+ * `base->pending` field, marking it as active in the pending queue.
+ * @param base The watcher's base structure.
+ * @param index The 0-based index in the pending array.
+ * @param queue The queue index (0 or 1).
+ */
+static inline __evio_nonnull(1)
+void evio_pending_set(evio_base *base, size_t index, size_t queue)
+{
+    base->pending = (index << 1) + 1 + queue;
+}
+
+/**
+ * @brief Gets the pending array index from a watcher's pending state.
+ * @param base The watcher's base structure.
+ * @return The 0-based index in the pending array.
+ */
+static inline __evio_nonnull(1) __evio_nodiscard
+size_t evio_pending_get_index(const evio_base *base)
+{
+    return (base->pending - 1) >> 1;
+}
+
+/**
+ * @brief Gets the pending queue index from a watcher's pending state.
+ * @param base The watcher's base structure.
+ * @return The queue index (0 or 1).
+ */
+static inline __evio_nonnull(1) __evio_nodiscard
+size_t evio_pending_get_queue(const evio_base *base)
+{
+    return (base->pending - 1) & 1;
+}
+
 void evio_queue_event(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     if (__evio_unlikely(base->pending)) {
-        const size_t queue = (base->pending - 1) & 1;
-        const size_t index = (base->pending - 1) >> 1;
+        const size_t queue = evio_pending_get_queue(base);
+        const size_t index = evio_pending_get_index(base);
 
         evio_pending_list *pending = &loop->pending[queue];
         EVIO_ASSERT(pending->count > index);
@@ -22,7 +58,7 @@ void evio_queue_event(evio_loop *loop, evio_base *base, evio_mask emask)
     evio_pending_list *pending = &loop->pending[queue];
 
     const size_t index = pending->count++;
-    base->pending = (index << 1) + 1 + queue;
+    evio_pending_set(base, index, queue);
 
     pending->ptr = evio_list_resize(pending->ptr, sizeof(evio_pending),
                                     pending->count, &pending->total);
@@ -197,7 +233,8 @@ void evio_invoke_pending(evio_loop *loop)
             const size_t index = --pending->count;
             evio_pending *p = &pending->ptr[index];
 
-            EVIO_ASSERT(p->base->pending == (index << 1) + 1 + queue);
+            EVIO_ASSERT(evio_pending_get_queue(p->base) == queue);
+            EVIO_ASSERT(evio_pending_get_index(p->base) == index);
 
             p->base->pending = 0;
             p->base->cb(loop, p->base, p->emask);
@@ -211,8 +248,8 @@ void evio_clear_pending(evio_loop *loop, evio_base *base)
         return;
     }
 
-    const size_t queue = (base->pending - 1) & 1;
-    const size_t index = (base->pending - 1) >> 1;
+    const size_t queue = evio_pending_get_queue(base);
+    const size_t index = evio_pending_get_index(base);
 
     evio_pending_list *pending = &loop->pending[queue];
 
@@ -220,7 +257,7 @@ void evio_clear_pending(evio_loop *loop, evio_base *base)
     EVIO_ASSERT(pending->ptr[index].base == base);
 
     pending->ptr[index] = pending->ptr[--pending->count];
-    pending->ptr[index].base->pending = base->pending;
+    evio_pending_set(pending->ptr[index].base, index, queue);
 
     base->pending = 0;
 }
