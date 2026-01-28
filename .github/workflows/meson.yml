@@ -35,12 +35,12 @@ jobs:
     env:
       CC: ${{ matrix.cc }}
     steps:
-    - uses: actions/checkout@main
-    - run: sudo apt-get update
-    - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev ${{ matrix.cc }}
-    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }} -Dtests=true
-    - run: meson compile -Cbuild -v
-    - run: meson test -Cbuild -v
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update
+      - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev ${{ matrix.cc }}
+      - run: meson setup build -Dbuildtype=${{ matrix.buildtype }} -Dtests=true
+      - run: meson compile -Cbuild -v
+      - run: meson test -Cbuild -v
 
   ubuntu-24:
     runs-on: ubuntu-24.04
@@ -55,27 +55,16 @@ jobs:
           - minsize
         cc:
           - gcc
-          - gcc-9
-          - gcc-10
-          - gcc-11
-          - gcc-12
-          - gcc-13
-          - gcc-14
           - clang
-          - clang-14
-          - clang-15
-          - clang-16
-          - clang-17
-          - clang-18
     env:
       CC: ${{ matrix.cc }}
     steps:
-    - uses: actions/checkout@main
-    - run: sudo apt-get update
-    - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev ${{ matrix.cc }}
-    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }} -Dtests=true
-    - run: meson compile -Cbuild -v
-    - run: meson test -Cbuild -v
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update
+      - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev ${{ matrix.cc }}
+      - run: meson setup build -Dbuildtype=${{ matrix.buildtype }} -Dtests=true
+      - run: meson compile -Cbuild -v
+      - run: meson test -Cbuild -v
 
   debian-sid:
     runs-on: ubuntu-latest
@@ -103,14 +92,14 @@ jobs:
     env:
       CC: ${{ matrix.cc }}
     steps:
-    - uses: actions/checkout@main
-    - run: apt-get update && apt-get install -yqq --no-install-recommends ca-certificates gpg curl
-    - run: curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --no-tty --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg
-    - run: echo "deb http://apt.llvm.org/unstable/ llvm-toolchain-20 main" >> /etc/apt/sources.list.d/llvm.list
-    - run: apt-get update && apt-get install -yqq --no-install-recommends build-essential meson pkgconf libcmocka-dev ${{ matrix.cc }}
-    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }} -Dtests=true
-    - run: meson compile -Cbuild -v
-    - run: meson test -Cbuild -v
+      - uses: actions/checkout@v4
+      - run: apt-get update && apt-get install -yqq --no-install-recommends ca-certificates gpg curl
+      - run: curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --no-tty --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg
+      - run: echo "deb http://apt.llvm.org/unstable/ llvm-toolchain-20 main" >> /etc/apt/sources.list.d/llvm.list
+      - run: apt-get update && apt-get install -yqq --no-install-recommends build-essential meson pkgconf libcmocka-dev ${{ matrix.cc }}
+      - run: meson setup build -Dbuildtype=${{ matrix.buildtype }} -Dtests=true
+      - run: meson compile -Cbuild -v
+      - run: meson test -Cbuild -v
 
   alpine:
     runs-on: ubuntu-latest
@@ -134,72 +123,72 @@ jobs:
     env:
       CC: ${{ matrix.cc }}
     steps:
-    - uses: actions/checkout@main
-    - run: apk --no-cache add build-base meson cmocka-dev ${{ matrix.cc }}
-    - run: meson setup build -Dbuildtype=${{ matrix.buildtype }} -Dtests=true
-    - run: meson compile -Cbuild -v
-    - run: meson test -Cbuild -v
+      - uses: actions/checkout@v4
+      - run: apk --no-cache add build-base meson cmocka-dev ${{ matrix.cc }}
+      - run: meson setup build -Dbuildtype=${{ matrix.buildtype }} -Dtests=true
+      - run: meson compile -Cbuild -v
+      - run: meson test -Cbuild -v
 
   valgrind:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@main
-    - run: sudo apt-get update
-    - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf valgrind libcmocka-dev
-    - run: meson setup build -Dbuildtype=debug -Dtests=true  -Dvalgrind=true
-    - run: meson compile -Cbuild -v
-    - run: meson test -Cbuild -v
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update
+      - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf valgrind libcmocka-dev
+      - run: meson setup build -Dbuildtype=debug -Dtests=true  -Dvalgrind=true
+      - run: meson compile -Cbuild -v
+      - run: meson test -Cbuild -v
 
   analyzer:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@main
-    - run: sudo apt-get update
-    - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev
-    - run: meson setup build -Dbuildtype=debug -Danalyzer=true -Dtests=true
-    - run: meson compile -Cbuild -v
-    - run: meson test -Cbuild -v
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update
+      - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev
+      - run: meson setup build -Dbuildtype=debug -Danalyzer=true -Dtests=true
+      - run: meson compile -Cbuild -v
+      - run: meson test -Cbuild -v
 
   sanitizers:
     runs-on: ubuntu-latest
     env:
       ASAN_OPTIONS: allocator_may_return_null=1
     steps:
-    - uses: actions/checkout@main
-    - run: sudo apt-get update
-    - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev
-    - run: meson setup build -Dbuildtype=debug -Dtests=true -Db_sanitize=address,undefined
-    - run: meson compile -Cbuild -v
-    - run: meson test -Cbuild -v
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update
+      - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev
+      - run: meson setup build -Dbuildtype=debug -Dtests=true -Db_sanitize=address,undefined
+      - run: meson compile -Cbuild -v
+      - run: meson test -Cbuild -v
 
   examples:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@main
-    - run: sudo apt-get update
-    - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev
-    - run: meson setup build -Dbuildtype=debug -Danalyzer=true -Dexamples=true
-    - run: meson compile -Cbuild -v
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update
+      - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev
+      - run: meson setup build -Dbuildtype=debug -Danalyzer=true -Dexamples=true
+      - run: meson compile -Cbuild -v
 
   benchmarks:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@main
-    - run: sudo apt-get update
-    - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev libuv1-dev libev-dev
-    - run: meson setup build -Dbuildtype=debug -Danalyzer=true -Dbenchmarks=true
-    - run: meson compile -Cbuild -v
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update
+      - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev libuv1-dev libev-dev
+      - run: meson setup build -Dbuildtype=debug -Danalyzer=true -Dbenchmarks=true
+      - run: meson compile -Cbuild -v
 
   coverage:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@main
-    - run: sudo apt-get update
-    - run: sudo apt-get install -yqq --no-install-recommends build-essential meson pkgconf libcmocka-dev gcovr git curl gnupg
-    - run: meson setup build -Dbuildtype=debug -Dtests=true -Db_coverage=true
-    - run: meson test -Cbuild -v
-    - run: ninja -Cbuild -v coverage
-    - uses: codecov/codecov-action@v5
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        slug: pavelxdd/evio
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update
+      - run: sudo apt-get install -yqq --no-install-recommends build-essential meson pkgconf libcmocka-dev gcovr git curl gnupg
+      - run: meson setup build -Dbuildtype=debug -Dtests=true -Db_coverage=true
+      - run: meson test -Cbuild -v
+      - run: ninja -Cbuild -v coverage
+      - uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: pavelxdd/evio

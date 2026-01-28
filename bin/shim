@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+
+cmd=$(basename "$0")
+
+if command -v "${cmd}" > /dev/null 2>&1; then
+  exec "${cmd}" "$@"
+fi

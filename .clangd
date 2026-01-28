@@ -1,0 +1,44 @@
+---
+CompileFlags:
+  Add:
+    - "-D__CLANGD__"
+    - "-D__INTELLISENSE__"
+Diagnostics:
+  ClangTidy:
+    Add:
+      - 'bugprone-*'
+      - 'clang-analyzer-*'
+      - 'clang-diagnostic-*'
+      - 'concurrency-*'
+      - 'misc-*'
+      - 'performance-*'
+      - 'portability-*'
+      - 'readability-*'
+    Remove:
+      - '*'
+      - 'bugprone-easily-swappable-parameters'
+      - 'bugprone-implicit-widening-of-multiplication-result'
+      - 'bugprone-multi-level-implicit-pointer-conversion'
+      - 'bugprone-narrowing-conversions'
+      - 'bugprone-reserved-identifier'
+      - 'bugprone-suspicious-include'
+      - 'bugprone-switch-missing-default-case'
+      - 'clang-analyzer-cplusplus.*'
+      - 'clang-analyzer-security.*'
+      - 'concurrency-mt-unsafe'
+      - 'misc-include-cleaner'
+      - 'misc-no-recursion'
+      - 'misc-unused-parameters'
+      - 'performance-no-int-to-ptr'
+      - 'readability-avoid-nested-conditional-operator'
+      - 'readability-else-after-return'
+      - 'readability-enum-initial-value'
+      - 'readability-function-cognitive-complexity'
+      - 'readability-identifier-length'
+      - 'readability-implicit-bool-conversion'
+      - 'readability-isolate-declaration'
+      - 'readability-magic-numbers'
+      - 'readability-suspicious-call-argument'
+      - 'readability-uppercase-literal-suffix'
+    CheckOptions:
+      readability-braces-around-statements.ShortStatementLines: 2

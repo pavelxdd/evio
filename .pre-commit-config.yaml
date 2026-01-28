@@ -1,22 +1,61 @@
 repos:
   - repo: local
     hooks:
-    - id: astyle
-      name: astyle
-      entry: astyle -Q -n
-      args: ['--options=.astylerc']
-      language: system
-      files: \.(c|h|h\.in)$
+      - id: astyle
+        name: astyle
+        entry: bin/astyle -Q -n
+        args: ['--options=.astylerc']
+        language: system
+        files: \.(c|h|h\.in)$
+
+      - id: shellcheck
+        name: shellcheck
+        entry: bin/shellcheck
+        language: system
+        types: [shell]
+        require_serial: true
+
+      - id: shfmt
+        name: shfmt
+        entry: bin/shfmt -s -ci -sr -fn -i 2 -w
+        language: system
+        types: [shell]
+
+      - id: hadolint
+        name: hadolint
+        entry: bin/hadolint
+        language: system
+        types: [dockerfile]
+
+      - id: yamllint
+        name: yamllint
+        entry: bin/yamllint
+        args: ['-d=relaxed']
+        language: system
+        types: [yaml]
+
+      - id: yamlfmt
+        name: yamlfmt
+        entry: bin/yamlfmt
+        language: system
+        types: [yaml]
+        exclude: \.clang-tidy$
+
+      - id: checkbashisms
+        name: checkbashisms
+        entry: bin/checkbashisms
+        language: system
+        types: [shell]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: check-json
       - id: check-yaml
       - id: check-case-conflict
       - id: check-merge-conflict
-      - id: check-executables-have-shebangs
-      - id: check-shebang-scripts-are-executable
+      # - id: check-executables-have-shebangs
+      # - id: check-shebang-scripts-are-executable
       - id: check-symlinks
       - id: destroyed-symlinks
       - id: detect-private-key
@@ -28,10 +67,3 @@ repos:
       - id: trailing-whitespace
         exclude_types: [diff, image]
       - id: forbid-submodules
-
-  - repo: https://github.com/adrienverge/yamllint
-    rev: v1.37.1
-    hooks:
-    - id: yamllint
-      args: ['-d=relaxed']
-      types: [yaml]

@@ -14,16 +14,34 @@ Designed and optimized specifically for **Linux**, it relies on Linux-specific A
 
 The project uses Meson for building.
 
+just:
+```bash
+just test          # Linux host
+just docker-test   # macOS/Windows host
+```
+
+build:
 ```bash
 meson setup build
 meson compile -Cbuild
 ```
 
-To run tests:
-
+tests:
 ```bash
 meson setup build -Dtests=true
 meson test -Cbuild -v
+```
+
+docker:
+```bash
+docker compose build --pull evio
+docker compose run --rm evio bash -lc 'meson setup build -Dtests=true && meson test -Cbuild -v'
+```
+
+podman:
+```bash
+podman-compose build --pull evio
+podman-compose run --rm evio bash -lc 'meson setup build -Dtests=true && meson test -Cbuild -v'
 ```
 
 ## API Usage Example

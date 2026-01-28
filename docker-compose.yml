@@ -1,0 +1,12 @@
+services:
+  evio:
+    build: .
+    volumes:
+      - ${WORKSPACE:-.}:/app
+    working_dir: /app
+    user: devcontainer
+    tmpfs:
+      - /tmp:mode=777
+    environment:
+      - WORKSPACE=${WORKSPACE:-.}
+      - PRE_COMMIT_HOME=/app/.cache/pre-commit
