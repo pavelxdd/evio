@@ -1,5 +1,5 @@
 project('evio', 'c',
-    version: '0.10.0',
+    version: '0.10.1',
     license: 'MIT',
     meson_version: '>=0.56.0',
     default_options: [
@@ -116,9 +116,16 @@ evio_sources = files(
     'src/evio_check.c',
     'src/evio_cleanup.c',
     'src/evio_once.c',
-    'src/evio_uring.c',
     'src/evio_eventfd.c',
 )
+
+io_uring_hdr = cc.has_header('linux/io_uring.h')
+if io_uring_hdr
+    evio_sources += files('src/evio_uring.c')
+    add_project_arguments('-DEVIO_IO_URING=1', language: 'c')
+else
+    evio_sources += files('src/evio_uring_stub.c')
+endif
 
 evio_headers = files(
     'src/evio.h',
@@ -180,9 +187,12 @@ if get_option('tests')
         'tests/test_check.c',
         'tests/test_cleanup.c',
         'tests/test_once.c',
-        'tests/test_uring.c',
         'tests/test_eventfd.c',
     )
+
+    if io_uring_hdr
+        test_sources += files('tests/test_uring.c')
+    endif
 
     evio_tests = executable('evio_tests', test_sources,
         c_args: [

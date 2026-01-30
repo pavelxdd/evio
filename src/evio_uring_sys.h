@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef EVIO_IO_URING
+#error "evio_uring_sys.h requires EVIO_IO_URING"
+#endif
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
