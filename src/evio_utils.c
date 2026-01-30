@@ -1,6 +1,8 @@
 #include "evio_core.h"
 #include "evio_utils.h"
 
+#include <errno.h>
+
 static struct {
     evio_abort_cb cb;
     void *ctx;
@@ -119,7 +121,12 @@ char *evio_strerror(int err, char *data, size_t size)
 
 char *evio_strerror(int err, char *data, size_t size)
 {
-    if (__evio_unlikely(strerror_r(err, data, size) != 0)) {
+    int rc = strerror_r(err, data, size);
+    if (__evio_unlikely(rc != 0)) {
+        int e = rc == -1 ? errno : rc;
+        if (e == ERANGE) {
+            return data;
+        }
         snprintf(data, size, "Unknown error %d", err);
     }
     return data;
