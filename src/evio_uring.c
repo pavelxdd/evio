@@ -255,14 +255,6 @@ static int evio_uring_probe_epoll_ctl(void)
 
     EVIO_URING_PROBE_TWEAK_PARAMS(&params);
 
-    /*
-     * Prefer the official PROBE API when available (no mmap assumptions).
-     * If it's not supported by the running kernel, fall back to a minimal
-     * submit-and-check sequence.
-     */
-    bool supported = false;
-    int result = -1;
-
 #ifdef IORING_REGISTER_PROBE
     if (__evio_likely(!EVIO_URING_PROBE_DISABLE_REGISTER_PROBE())) {
         unsigned int ops_len = 256;
@@ -280,13 +272,13 @@ static int evio_uring_probe_epoll_ctl(void)
             for (unsigned int i = 0; i < probe->ops_len; ++i) {
                 const struct io_uring_probe_op *op = &probe->ops[i];
                 if (op->op == IORING_OP_EPOLL_CTL) {
-                    supported = (op->flags & 1u) != 0;
-                    break;
+                    close(fd);
+                    return (op->flags & 1u) ? 1 : 0;
                 }
             }
 
             close(fd);
-            return supported ? 1 : 0;
+            return 0;
         }
     }
 #endif
@@ -308,7 +300,7 @@ static int evio_uring_probe_epoll_ctl(void)
                                 fd, IORING_OFF_SQ_RING);
         if (__evio_unlikely(sqptr == MAP_FAILED)) {
             close(fd);
-            return false;
+            return -1;
         }
         cqptr = sqptr;
         sqmap_len = maxlen;
@@ -320,7 +312,7 @@ static int evio_uring_probe_epoll_ctl(void)
                                 fd, IORING_OFF_SQ_RING);
         if (__evio_unlikely(sqptr == MAP_FAILED)) {
             close(fd);
-            return false;
+            return -1;
         }
         sqmap_len = sqlen;
 
@@ -330,7 +322,7 @@ static int evio_uring_probe_epoll_ctl(void)
         if (__evio_unlikely(cqptr == MAP_FAILED)) {
             munmap(sqptr, sqmap_len);
             close(fd);
-            return false;
+            return -1;
         }
         cqmap_len = cqlen;
     }
@@ -344,7 +336,7 @@ static int evio_uring_probe_epoll_ctl(void)
         }
         munmap(sqptr, sqmap_len);
         close(fd);
-        return false;
+        return -1;
     }
 
     uint32_t *sqtail = (uint32_t *)(sqptr + params.sq_off.tail);
@@ -366,7 +358,7 @@ static int evio_uring_probe_epoll_ctl(void)
         }
         munmap(sqptr, sqmap_len);
         close(fd);
-        return false;
+        return -1;
     }
 
     struct epoll_event probe_ev = { .events = EPOLLIN, .data.u64 = 0 };
@@ -379,7 +371,7 @@ static int evio_uring_probe_epoll_ctl(void)
         }
         munmap(sqptr, sqmap_len);
         close(fd);
-        return false;
+        return -1;
     }
 
     sqe[0] = (struct io_uring_sqe) {
@@ -393,6 +385,7 @@ static int evio_uring_probe_epoll_ctl(void)
 
     evio_uring_store(sqtail, 1);
 
+    int result = -1;
     int ret = evio_uring_enter(fd, 1, 1, IORING_ENTER_GETEVENTS, NULL, 0);
     if (__evio_likely(ret == 1)) {
         uint32_t head = evio_uring_load(cqhead);
@@ -402,10 +395,8 @@ static int evio_uring_probe_epoll_ctl(void)
             int res = cqe[head & cqmask].res;
             EVIO_URING_PROBE_TWEAK_CQE_RES(&res);
             if (res == 0) {
-                supported = true;
                 result = 1;
             } else if (res == -EINVAL) {
-                supported = false;
                 result = 0;
             }
         }
@@ -425,22 +416,22 @@ static int evio_uring_probe_epoll_ctl(void)
 #ifndef EVIO_TESTING
 
 // GCOVR_EXCL_START
-static bool evio_uring_probe_epoll_ctl_cached(void)
+static int evio_uring_probe_epoll_ctl_cached(void)
 {
     static _Atomic int cached = -1;
 
     int v = atomic_load_explicit(&cached, memory_order_acquire);
     if (__evio_likely(v >= 0)) {
-        return v != 0;
+        return v;
     }
 
     int probe = evio_uring_probe_epoll_ctl();
     if (probe >= 0) {
         atomic_store_explicit(&cached, probe ? 1 : 0, memory_order_release);
-        return probe != 0;
+        return probe;
     }
 
-    return false;
+    return -1;
 }
 // GCOVR_EXCL_STOP
 
@@ -453,7 +444,7 @@ evio_uring *evio_uring_new(void)
         return NULL;
     }
 #else // GCOVR_EXCL_START
-    if (__evio_unlikely(!evio_uring_probe_epoll_ctl_cached())) {
+    if (__evio_unlikely(evio_uring_probe_epoll_ctl_cached() != 1)) {
         return NULL;
     }
 #endif // GCOVR_EXCL_STOP
