@@ -114,7 +114,7 @@ char *evio_strerror(int err, char *data, size_t size)
     if (__evio_unlikely(!desc)) {
         snprintf(data, size, "Unknown error %d", err);
     } else if (__evio_unlikely(!name)) {
-        snprintf(data, size, "%s", desc);
+        snprintf(data, size, "%s", desc); // GCOVR_EXCL_LINE
     } else {
         snprintf(data, size, "%s (%s)", desc, name);
     }

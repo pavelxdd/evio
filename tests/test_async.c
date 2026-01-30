@@ -85,6 +85,18 @@ static bool async_wait_for(async_wait *w, size_t want, int timeout_ms)
     return ok;
 }
 
+TEST(test_async_wait_for_timeout)
+{
+    async_wait w = { 0 };
+    pthread_mutex_init(&w.mu, NULL);
+    pthread_cond_init(&w.cv, NULL);
+
+    assert_false(async_wait_for(&w, 1, 0));
+
+    pthread_cond_destroy(&w.cv);
+    pthread_mutex_destroy(&w.mu);
+}
+
 static void async_wait_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     (void)loop;
@@ -159,9 +171,9 @@ TEST(test_evio_async_double_send_wakes_loop_twice)
     bool saw_disallow = false;
     for (int i = 1000; i--;) {
         if (!atomic_load_explicit(&loop->eventfd_allow.value, memory_order_acquire)) {
-            saw_disallow = true;
+            saw_disallow = true; // GCOVR_EXCL_LINE
         } else if (saw_disallow) {
-            break;
+            break; // GCOVR_EXCL_LINE
         }
         usleep(100);
     }

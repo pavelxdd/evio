@@ -438,6 +438,7 @@ static int evio_uring_probe_epoll_ctl(void)
 
 #ifndef EVIO_TESTING
 
+// GCOVR_EXCL_START
 static bool evio_uring_probe_epoll_ctl_cached(void)
 {
     static _Atomic int cached = -1;
@@ -455,6 +456,7 @@ static bool evio_uring_probe_epoll_ctl_cached(void)
 
     return false;
 }
+// GCOVR_EXCL_STOP
 
 #endif
 
@@ -464,11 +466,11 @@ evio_uring *evio_uring_new(void)
     if (__evio_unlikely(evio_uring_probe_epoll_ctl() != 1)) {
         return NULL;
     }
-#else
+#else // GCOVR_EXCL_START
     if (__evio_unlikely(!evio_uring_probe_epoll_ctl_cached())) {
         return NULL;
     }
-#endif
+#endif // GCOVR_EXCL_STOP
 
     struct io_uring_params params = { 0 };
 

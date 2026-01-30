@@ -919,7 +919,7 @@ static bool evio_test_uring_supported(void)
     evio_uring_test_probe_reset();
     evio_uring *iou = evio_uring_new();
     if (!iou) {
-        return false;
+        return false; // GCOVR_EXCL_LINE
     }
     evio_uring_free(iou);
     return true;

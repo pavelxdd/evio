@@ -44,6 +44,39 @@ void evio_test_loop_after_timeout(evio_loop *loop, int *timeout)
     evio_eventfd_write(loop);
 }
 
+TEST(test_evio_test_loop_after_timeout_timeout_nonpositive)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    atomic_store_explicit(&evio_test_loop_timeout_hook, 1, memory_order_release);
+
+    int timeout = 0;
+    evio_test_loop_after_timeout(loop, &timeout);
+
+    atomic_store_explicit(&evio_test_loop_timeout_hook, 0, memory_order_release);
+    evio_loop_free(loop);
+}
+
+static FILE *evio_test_abort_cb_stream(void *ctx)
+{
+    return ctx;
+}
+
+TEST(test_evio_test_abort_ctx_handler_cb)
+{
+    struct evio_test_abort_ctx abort_ctx = { 0 };
+    FILE *stream;
+
+    abort_ctx.st.stream = stderr;
+    abort_ctx.cb = evio_test_abort_cb_stream;
+    abort_ctx.cb_ctx = stdout;
+
+    stream = evio_test_abort_ctx_handler(&abort_ctx);
+    assert_ptr_equal(stream, stdout);
+    assert_int_equal(abort_ctx.called, 1);
+}
+
 TEST(test_evio_clock_gettime_fail)
 {
     jmp_buf jmp;

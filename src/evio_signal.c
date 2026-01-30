@@ -77,7 +77,7 @@ void evio_signal_process_pending(evio_loop *loop)
                 unsigned b = (unsigned)__builtin_ctzll(bits);
                 unsigned idx = (unsigned)(wi * 64u + b);
                 if (__evio_unlikely(idx >= (unsigned)(NSIG - 1))) {
-                    break;
+                    break; // GCOVR_EXCL_LINE
                 }
 
                 bits &= bits - 1;

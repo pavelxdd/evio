@@ -175,7 +175,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update
-      - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf libcmocka-dev libuv1-dev libev-dev
+      - run: sudo apt-get install -yqq --no-install-recommends meson pkgconf python3 libcmocka-dev libuv1-dev libev-dev libevent-dev
       - run: meson setup build -Dbuildtype=debug -Danalyzer=true -Dbenchmarks=true
       - run: meson compile -Cbuild -v
 
