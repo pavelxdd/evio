@@ -57,6 +57,7 @@ static inline void evio_test_abort_begin(struct evio_test_abort_state *st, jmp_b
 
     st->stream = tmpfile();
     st->stream_owned = st->stream != NULL;
+    // GCOVR_EXCL_START
     if (!st->stream) {
         st->stream = fopen("/dev/null", "w");
         st->stream_owned = st->stream != NULL;
@@ -64,10 +65,13 @@ static inline void evio_test_abort_begin(struct evio_test_abort_state *st, jmp_b
             st->stream = stderr;
         }
     }
+    // GCOVR_EXCL_STOP
 
     st->stderr_fd = dup(fileno(stderr));
+    // GCOVR_EXCL_START
     st->stderr_redirected = st->stderr_fd >= 0 &&
                             dup2(fileno(st->stream), fileno(stderr)) >= 0;
+    // GCOVR_EXCL_STOP
 
     evio_test_abort_jmp = jmp;
     evio_set_abort_func(evio_test_abort_func);

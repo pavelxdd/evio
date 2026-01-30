@@ -112,6 +112,7 @@ RUN --mount=type=bind,target=/app \
         libev-dev \
         libevent-dev \
         libuv1-dev \
+        gcovr \
         valgrind \
         pre-commit \
         shellcheck \

@@ -89,9 +89,11 @@ static void evio_signal_process_pending_word(evio_loop *loop, uint64_t bits, uns
     while (bits) {
         unsigned int b = (unsigned int)__builtin_ctzll(bits);
         unsigned int idx = base + b;
+        // GCOVR_EXCL_START
         if (__evio_unlikely(idx >= (unsigned int)(NSIG - 1))) {
-            break; // GCOVR_EXCL_LINE
+            break;
         }
+        // GCOVR_EXCL_STOP
 
         bits &= bits - 1;
         evio_signal_process_pending_idx(loop, idx);

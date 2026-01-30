@@ -918,18 +918,22 @@ static bool evio_test_uring_supported(void)
 {
     evio_uring_test_probe_reset();
     evio_uring *iou = evio_uring_new();
+    // GCOVR_EXCL_START
     if (!iou) {
-        return false; // GCOVR_EXCL_LINE
+        return false;
     }
+    // GCOVR_EXCL_STOP
     evio_uring_free(iou);
     return true;
 }
 
 TEST(test_evio_uring_probe_fail_single_mmap)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_disable_single_mmap(false);
@@ -939,9 +943,11 @@ TEST(test_evio_uring_probe_fail_single_mmap)
 
 TEST(test_evio_uring_probe_fail_single_mmap_default_errno)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_disable_single_mmap(false);
@@ -951,9 +957,11 @@ TEST(test_evio_uring_probe_fail_single_mmap_default_errno)
 
 TEST(test_evio_uring_probe_fail_sq_mmap)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_disable_single_mmap(true);
@@ -963,9 +971,11 @@ TEST(test_evio_uring_probe_fail_sq_mmap)
 
 TEST(test_evio_uring_probe_fail_cq_mmap)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_disable_single_mmap(true);
@@ -975,9 +985,11 @@ TEST(test_evio_uring_probe_fail_cq_mmap)
 
 TEST(test_evio_uring_probe_fail_sqe_mmap)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_disable_single_mmap(true);
@@ -987,9 +999,11 @@ TEST(test_evio_uring_probe_fail_sqe_mmap)
 
 TEST(test_evio_uring_probe_fail_sqe_mmap_single_mmap)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_disable_single_mmap(false);
@@ -999,9 +1013,11 @@ TEST(test_evio_uring_probe_fail_sqe_mmap_single_mmap)
 
 TEST(test_evio_uring_probe_fail_epoll_create)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_disable_single_mmap(true);
@@ -1011,9 +1027,11 @@ TEST(test_evio_uring_probe_fail_epoll_create)
 
 TEST(test_evio_uring_probe_fail_epoll_create_single_mmap)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_disable_single_mmap(false);
@@ -1023,9 +1041,11 @@ TEST(test_evio_uring_probe_fail_epoll_create_single_mmap)
 
 TEST(test_evio_uring_probe_fail_epoll_create_default_errno)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_disable_single_mmap(true);
@@ -1035,9 +1055,11 @@ TEST(test_evio_uring_probe_fail_epoll_create_default_errno)
 
 TEST(test_evio_uring_probe_fail_eventfd)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_disable_single_mmap(true);
@@ -1047,9 +1069,11 @@ TEST(test_evio_uring_probe_fail_eventfd)
 
 TEST(test_evio_uring_probe_fail_eventfd_single_mmap)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_disable_single_mmap(false);
@@ -1059,9 +1083,11 @@ TEST(test_evio_uring_probe_fail_eventfd_single_mmap)
 
 TEST(test_evio_uring_probe_fail_eventfd_default_errno)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_disable_single_mmap(true);
@@ -1071,9 +1097,11 @@ TEST(test_evio_uring_probe_fail_eventfd_default_errno)
 
 TEST(test_evio_uring_probe_fail_setup_default_errno)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_fail_setup_once(0);
@@ -1082,9 +1110,11 @@ TEST(test_evio_uring_probe_fail_setup_default_errno)
 
 TEST(test_evio_uring_probe_fail_setup_errno)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_fail_setup_once(EPERM);
@@ -1118,9 +1148,11 @@ TEST(test_evio_uring_probe_setup_fail_branches)
 
 TEST(test_evio_uring_probe_fail_enter_ret)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_enter_ret_once(0, 0);
@@ -1129,9 +1161,11 @@ TEST(test_evio_uring_probe_fail_enter_ret)
 
 TEST(test_evio_uring_probe_fail_enter_errno_default)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_enter_ret_once(-1, 0);
@@ -1140,9 +1174,11 @@ TEST(test_evio_uring_probe_fail_enter_errno_default)
 
 TEST(test_evio_uring_probe_fail_enter_errno)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_enter_ret_once(-1, EINTR);
@@ -1151,9 +1187,11 @@ TEST(test_evio_uring_probe_fail_enter_errno)
 
 TEST(test_evio_uring_probe_empty_cq)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_enter_ret_once(1, 0);
@@ -1166,9 +1204,11 @@ TEST(test_evio_uring_probe_fallback_without_register_probe)
 #ifndef IORING_REGISTER_PROBE
     TEST_SKIP();
 #else
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_disable_register_probe(true);
@@ -1181,9 +1221,11 @@ TEST(test_evio_uring_probe_fallback_without_register_probe)
 
 TEST(test_evio_uring_probe_fallback_on_register_fail)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_fail_register_once(EPERM);
@@ -1216,9 +1258,11 @@ TEST(test_evio_uring_test_disable_register_probe_flag)
 
 TEST(test_evio_uring_probe_force_einval)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_force_cqe_res_once(-EINVAL);
@@ -1227,9 +1271,11 @@ TEST(test_evio_uring_probe_force_einval)
 
 TEST(test_evio_uring_probe_force_other_error)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_force_cqe_res_once(-EFAULT);
@@ -1239,9 +1285,11 @@ TEST(test_evio_uring_probe_force_other_error)
 #ifdef IORING_SETUP_NO_SQARRAY
 TEST(test_evio_uring_probe_no_sqarray)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_force_sq_off_array_zero(true);
@@ -1283,9 +1331,11 @@ TEST(test_evio_uring_inject_mismatch)
 
 TEST(test_evio_uring_probe_munmap_cq)
 {
+    // GCOVR_EXCL_START
     if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel"); // GCOVR_EXCL_LINE
+        TEST_SKIPF("io_uring unsupported by kernel");
     }
+    // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
     evio_uring_test_probe_disable_single_mmap(true);

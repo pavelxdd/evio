@@ -1,6 +1,8 @@
 services:
   evio:
     build: .
+    security_opt:
+      - seccomp=unconfined
     volumes:
       - ${WORKSPACE:-.}:/app
     working_dir: /app

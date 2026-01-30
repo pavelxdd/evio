@@ -169,14 +169,16 @@ TEST(test_evio_async_double_send_wakes_loop_twice)
     assert_true(async_wait_for(&w, 1, 200));
 
     bool saw_disallow = false;
+    // GCOVR_EXCL_START
     for (int i = 1000; i--;) {
         if (!atomic_load_explicit(&loop->eventfd_allow.value, memory_order_acquire)) {
-            saw_disallow = true; // GCOVR_EXCL_LINE
+            saw_disallow = true;
         } else if (saw_disallow) {
-            break; // GCOVR_EXCL_LINE
+            break;
         }
         usleep(100);
     }
+    // GCOVR_EXCL_STOP
 
     evio_async_send(loop, &async);
 
