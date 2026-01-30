@@ -16,8 +16,8 @@ void *evio_list_resize(void *ptr, size_t size, size_t count, size_t *total)
         return ptr;
     }
 
-    unsigned bits = (unsigned)(sizeof(unsigned long long) * 8);
-    unsigned shift = bits - __builtin_clzll((unsigned long long)(count - 1));
+    unsigned int bits = (unsigned int)(sizeof(unsigned long long) * 8);
+    unsigned int shift = bits - __builtin_clzll((unsigned long long)(count - 1));
 
     *total = 1ull << shift;
 

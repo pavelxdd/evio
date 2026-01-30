@@ -9,7 +9,7 @@ static inline void evio_signal_active_set(evio_loop *loop, int signum)
     EVIO_ASSERT(signum > 0);
     EVIO_ASSERT(signum < NSIG);
 
-    unsigned idx = (unsigned)(signum - 1);
+    unsigned int idx = (unsigned int)(signum - 1);
     loop->sig_active[idx >> 6] |= 1ull << (idx & 63);
 }
 
@@ -18,7 +18,7 @@ static inline void evio_signal_active_clear(evio_loop *loop, int signum)
     EVIO_ASSERT(signum > 0);
     EVIO_ASSERT(signum < NSIG);
 
-    unsigned idx = (unsigned)(signum - 1);
+    unsigned int idx = (unsigned int)(signum - 1);
     loop->sig_active[idx >> 6] &= ~(1ull << (idx & 63));
 }
 
@@ -68,41 +68,52 @@ void evio_signal_queue_events(evio_loop *loop, int signum)
     }
 }
 
+static void evio_signal_process_pending_idx(evio_loop *loop, unsigned int idx)
+{
+    evio_sig *sig = &evio_signals[idx];
+    if (__evio_unlikely(atomic_load_explicit(&sig->loop, memory_order_acquire) != loop)) {
+        return;
+    }
+
+    if (atomic_exchange_explicit(&sig->status.value, 0, memory_order_acq_rel)) {
+        for (size_t j = sig->list.count; j--;) {
+            evio_signal *w = container_of(sig->list.ptr[j], evio_signal, base);
+            EVIO_ASSERT(w->signum == (int)idx + 1);
+            evio_queue_event(loop, &w->base, EVIO_SIGNAL);
+        }
+    }
+}
+
+static void evio_signal_process_pending_word(evio_loop *loop, uint64_t bits, unsigned int base)
+{
+    while (bits) {
+        unsigned int b = (unsigned int)__builtin_ctzll(bits);
+        unsigned int idx = base + b;
+        if (__evio_unlikely(idx >= (unsigned int)(NSIG - 1))) {
+            break; // GCOVR_EXCL_LINE
+        }
+
+        bits &= bits - 1;
+        evio_signal_process_pending_idx(loop, idx);
+    }
+}
+
 void evio_signal_process_pending(evio_loop *loop)
 {
     if (atomic_exchange_explicit(&loop->signal_pending.value, 0, memory_order_acq_rel)) {
+#if EVIO_SIGSET_WORDS == 1
+        evio_signal_process_pending_word(loop, loop->sig_active[0], 0);
+#else
         for (size_t wi = 0; wi < EVIO_SIGSET_WORDS; ++wi) {
-            uint64_t bits = loop->sig_active[wi];
-            while (bits) {
-                unsigned b = (unsigned)__builtin_ctzll(bits);
-                unsigned idx = (unsigned)(wi * 64u + b);
-                if (__evio_unlikely(idx >= (unsigned)(NSIG - 1))) {
-                    break; // GCOVR_EXCL_LINE
-                }
-
-                bits &= bits - 1;
-
-                evio_sig *sig = &evio_signals[idx];
-
-                if (__evio_unlikely(atomic_load_explicit(&sig->loop, memory_order_acquire) != loop)) {
-                    continue;
-                }
-
-                if (atomic_exchange_explicit(&sig->status.value, 0, memory_order_acq_rel)) {
-                    for (size_t j = sig->list.count; j--;) {
-                        evio_signal *w = container_of(sig->list.ptr[j], evio_signal, base);
-                        EVIO_ASSERT(w->signum == (int)idx + 1);
-                        evio_queue_event(loop, &w->base, EVIO_SIGNAL);
-                    }
-                }
-            }
+            evio_signal_process_pending_word(loop, loop->sig_active[wi], (unsigned int)wi * 64u);
         }
+#endif
     }
 }
 
 void evio_signal_cleanup_loop(evio_loop *loop)
 {
-    for (int i = NSIG - 1; i--;) {
+    for (int i = 0; i < NSIG - 1; ++i) {
         evio_sig *sig = &evio_signals[i];
 
         if (atomic_load_explicit(&sig->loop, memory_order_acquire) == loop) {

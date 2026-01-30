@@ -27,7 +27,7 @@ void evio_uring_test_inject_reset(void);
 
 void evio_uring_test_probe_reset(void);
 void evio_uring_test_probe_disable_single_mmap(bool disable);
-void evio_uring_test_probe_fail_mmap_at(unsigned call, int err);
+void evio_uring_test_probe_fail_mmap_at(unsigned int call, int err);
 void evio_uring_test_probe_fail_setup_once(int err);
 void evio_uring_test_probe_fail_register_once(int err);
 void evio_uring_test_probe_fail_epoll_create_once(int err);

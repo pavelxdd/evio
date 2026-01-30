@@ -13,8 +13,8 @@ static struct {
 static struct {
     bool disable_single_mmap;
 
-    unsigned mmap_call;
-    unsigned mmap_fail_at;
+    unsigned int mmap_call;
+    unsigned int mmap_fail_at;
     int mmap_err;
 
     bool setup_fail;
@@ -66,7 +66,7 @@ void evio_uring_test_probe_disable_single_mmap(bool disable)
     evio_uring_probe_injection.disable_single_mmap = disable;
 }
 
-void evio_uring_test_probe_fail_mmap_at(unsigned call, int err)
+void evio_uring_test_probe_fail_mmap_at(unsigned int call, int err)
 {
     evio_uring_probe_injection.mmap_fail_at = call;
     evio_uring_probe_injection.mmap_err = err;
@@ -175,7 +175,7 @@ int evio_test_uring_register(unsigned int fd, unsigned int opcode,
 void *evio_test_uring_mmap(void *addr, size_t length, int prot,
                            int flags, int fd, off_t offset)
 {
-    unsigned call = ++evio_uring_probe_injection.mmap_call;
+    unsigned int call = ++evio_uring_probe_injection.mmap_call;
     if (evio_uring_probe_injection.mmap_fail_at &&
         call == evio_uring_probe_injection.mmap_fail_at) {
         evio_uring_probe_injection.mmap_fail_at = 0;

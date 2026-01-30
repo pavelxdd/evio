@@ -41,7 +41,7 @@ enum {
 #define MSGS_PER_CONN   1024u
 #define IO_BATCH        64u
 
-static unsigned env_u32(const char *name, unsigned def, unsigned max)
+static unsigned int env_u32(const char *name, unsigned int def, unsigned int max)
 {
     const char *s = getenv(name);
     if (!s || !*s) {
@@ -60,7 +60,7 @@ static unsigned env_u32(const char *name, unsigned def, unsigned max)
     if (v > max) {
         return max;
     }
-    return (unsigned)v;
+    return (unsigned int)v;
 }
 
 static int set_nonblock_cloexec(int fd)
@@ -99,7 +99,7 @@ static int socketpair_nb(int fds[2])
     return 0;
 }
 
-static unsigned cap_conns_by_rlimit(unsigned workers, unsigned conns)
+static unsigned int cap_conns_by_rlimit(unsigned int workers, unsigned int conns)
 {
     struct rlimit lim;
     if (getrlimit(RLIMIT_NOFILE, &lim) != 0) {
@@ -121,7 +121,7 @@ static unsigned cap_conns_by_rlimit(unsigned workers, unsigned conns)
         maxc = 1;
     }
     if ((unsigned long long)conns > maxc) {
-        return (unsigned)maxc;
+        return (unsigned int)maxc;
     }
     return conns;
 }
@@ -146,18 +146,18 @@ struct evio_worker {
     pthread_barrier_t *start;
     pthread_barrier_t *finish;
     evio_worker *all;
-    unsigned workers;
-    unsigned idx;
-    unsigned conns;
-    unsigned k;
+    unsigned int workers;
+    unsigned int idx;
+    unsigned int conns;
+    unsigned int k;
     bool use_uring;
 
     evio_loop *loop;
     evio_async async;
     _Atomic bool alive;
-    _Atomic unsigned churn_reqs;
-    unsigned churn_pending;
-    unsigned churn_seq;
+    _Atomic unsigned int churn_reqs;
+    unsigned int churn_pending;
+    unsigned int churn_seq;
 
     evio_conn *conn;
     uint64_t msgs_target;
@@ -267,7 +267,7 @@ static void *evio_workers_thread(void *ptr)
         abort();
     }
 
-    for (unsigned i = 0; i < w->conns; ++i) {
+    for (unsigned int i = 0; i < w->conns; ++i) {
         int fds[2];
         if (socketpair_nb(fds) != 0) {
             abort();
@@ -304,13 +304,13 @@ static void *evio_workers_thread(void *ptr)
     char in[MSG_SIZE];
     memset(in, 'x', sizeof(in));
 
-    unsigned seq = 0;
+    unsigned int seq = 0;
     while (w->done_msgs < w->msgs_target) {
-        unsigned idxs[IO_BATCH];
-        unsigned nidx = 0;
+        unsigned int idxs[IO_BATCH];
+        unsigned int nidx = 0;
 
         for (; nidx < IO_BATCH && w->sent_msgs < w->msgs_target; ++nidx) {
-            unsigned idx = seq++ % w->conns;
+            unsigned int idx = seq++ % w->conns;
             idxs[nidx] = idx;
 
             evio_conn *c = &w->conn[idx];
@@ -328,8 +328,8 @@ static void *evio_workers_thread(void *ptr)
             evio_run(w->loop, EVIO_RUN_NOWAIT);
         }
 
-        for (unsigned i = 0; i < nidx; ++i) {
-            unsigned idx = idxs[i];
+        for (unsigned int i = 0; i < nidx; ++i) {
+            unsigned int idx = idxs[i];
             evio_conn *c = &w->conn[idx];
             for (;;) {
                 char out[4096];
@@ -350,13 +350,13 @@ static void *evio_workers_thread(void *ptr)
         }
 
         while (w->churn_pending && w->sent_msgs == w->done_msgs) {
-            unsigned idx = w->churn_seq++ % w->conns;
+            unsigned int idx = w->churn_seq++ % w->conns;
             evio_conn_reopen(w->loop, &w->conn[idx]);
             --w->churn_pending;
         }
 
         if (w->done_msgs >= next_async && w->workers > 1) {
-            unsigned dst = (w->idx + 1) % w->workers;
+            unsigned int dst = (w->idx + 1) % w->workers;
             evio_worker *t = &w->all[dst];
             if (atomic_load_explicit(&t->alive, memory_order_acquire)) {
                 atomic_fetch_add_explicit(&t->churn_reqs, 1, memory_order_release);
@@ -371,7 +371,7 @@ static void *evio_workers_thread(void *ptr)
 
     evio_async_stop(w->loop, &w->async);
 
-    for (unsigned i = 0; i < w->conns; ++i) {
+    for (unsigned int i = 0; i < w->conns; ++i) {
         evio_conn *c = &w->conn[i];
         evio_poll_stop(w->loop, &c->io);
         close(c->srv_fd);
@@ -382,7 +382,7 @@ static void *evio_workers_thread(void *ptr)
     return NULL;
 }
 
-static void bench_evio_workers(unsigned workers, unsigned conns, unsigned k, bool use_uring)
+static void bench_evio_workers(unsigned int workers, unsigned int conns, unsigned int k, bool use_uring)
 {
     pthread_barrier_t ready;
     pthread_barrier_t start;
@@ -402,7 +402,7 @@ static void bench_evio_workers(unsigned workers, unsigned conns, unsigned k, boo
         abort();
     }
 
-    for (unsigned i = 0; i < workers; ++i) {
+    for (unsigned int i = 0; i < workers; ++i) {
         w[i].ready = &ready;
         w[i].start = &start;
         w[i].finish = &finish;
@@ -423,7 +423,7 @@ static void bench_evio_workers(unsigned workers, unsigned conns, unsigned k, boo
     uint64_t start_ns = get_time_ns();
     pthread_barrier_wait(&start);
 
-    for (unsigned i = 0; i < workers; ++i) {
+    for (unsigned int i = 0; i < workers; ++i) {
         pthread_join(w[i].thr, NULL);
     }
     uint64_t end_ns = get_time_ns();
@@ -457,17 +457,17 @@ struct libev_worker {
     pthread_barrier_t *start;
     pthread_barrier_t *finish;
     libev_worker *all;
-    unsigned workers;
-    unsigned idx;
-    unsigned conns;
-    unsigned k;
+    unsigned int workers;
+    unsigned int idx;
+    unsigned int conns;
+    unsigned int k;
 
     struct ev_loop *loop;
     ev_async async;
     _Atomic bool alive;
-    _Atomic unsigned churn_reqs;
-    unsigned churn_pending;
-    unsigned churn_seq;
+    _Atomic unsigned int churn_reqs;
+    unsigned int churn_pending;
+    unsigned int churn_seq;
 
     libev_conn *conn;
     uint64_t msgs_target;
@@ -581,7 +581,7 @@ static void *libev_workers_thread(void *ptr)
         abort();
     }
 
-    for (unsigned i = 0; i < w->conns; ++i) {
+    for (unsigned int i = 0; i < w->conns; ++i) {
         int fds[2];
         if (socketpair_nb(fds) != 0) {
             abort();
@@ -618,13 +618,13 @@ static void *libev_workers_thread(void *ptr)
     char in[MSG_SIZE];
     memset(in, 'x', sizeof(in));
 
-    unsigned seq = 0;
+    unsigned int seq = 0;
     while (w->done_msgs < w->msgs_target) {
-        unsigned idxs[IO_BATCH];
-        unsigned nidx = 0;
+        unsigned int idxs[IO_BATCH];
+        unsigned int nidx = 0;
 
         for (; nidx < IO_BATCH && w->sent_msgs < w->msgs_target; ++nidx) {
-            unsigned idx = seq++ % w->conns;
+            unsigned int idx = seq++ % w->conns;
             idxs[nidx] = idx;
 
             libev_conn *c = &w->conn[idx];
@@ -642,8 +642,8 @@ static void *libev_workers_thread(void *ptr)
             ev_run(w->loop, EVRUN_NOWAIT);
         }
 
-        for (unsigned i = 0; i < nidx; ++i) {
-            unsigned idx = idxs[i];
+        for (unsigned int i = 0; i < nidx; ++i) {
+            unsigned int idx = idxs[i];
             libev_conn *c = &w->conn[idx];
             for (;;) {
                 char out[4096];
@@ -664,13 +664,13 @@ static void *libev_workers_thread(void *ptr)
         }
 
         while (w->churn_pending && w->sent_msgs == w->done_msgs) {
-            unsigned idx = w->churn_seq++ % w->conns;
+            unsigned int idx = w->churn_seq++ % w->conns;
             libev_conn_reopen(w->loop, &w->conn[idx]);
             --w->churn_pending;
         }
 
         if (w->done_msgs >= next_async && w->workers > 1) {
-            unsigned dst = (w->idx + 1) % w->workers;
+            unsigned int dst = (w->idx + 1) % w->workers;
             libev_worker *t = &w->all[dst];
             if (atomic_load_explicit(&t->alive, memory_order_acquire)) {
                 atomic_fetch_add_explicit(&t->churn_reqs, 1, memory_order_release);
@@ -685,7 +685,7 @@ static void *libev_workers_thread(void *ptr)
 
     ev_async_stop(w->loop, &w->async);
 
-    for (unsigned i = 0; i < w->conns; ++i) {
+    for (unsigned int i = 0; i < w->conns; ++i) {
         libev_conn *c = &w->conn[i];
         ev_io_stop(w->loop, &c->io);
         close(c->srv_fd);
@@ -697,7 +697,7 @@ static void *libev_workers_thread(void *ptr)
     return NULL;
 }
 
-static void bench_libev_workers(unsigned workers, unsigned conns, unsigned k)
+static void bench_libev_workers(unsigned int workers, unsigned int conns, unsigned int k)
 {
     pthread_barrier_t ready;
     pthread_barrier_t start;
@@ -717,7 +717,7 @@ static void bench_libev_workers(unsigned workers, unsigned conns, unsigned k)
         abort();
     }
 
-    for (unsigned i = 0; i < workers; ++i) {
+    for (unsigned int i = 0; i < workers; ++i) {
         w[i].ready = &ready;
         w[i].start = &start;
         w[i].finish = &finish;
@@ -737,7 +737,7 @@ static void bench_libev_workers(unsigned workers, unsigned conns, unsigned k)
     uint64_t start_ns = get_time_ns();
     pthread_barrier_wait(&start);
 
-    for (unsigned i = 0; i < workers; ++i) {
+    for (unsigned int i = 0; i < workers; ++i) {
         pthread_join(w[i].thr, NULL);
     }
     uint64_t end_ns = get_time_ns();
@@ -771,19 +771,19 @@ struct libevent_worker {
     pthread_barrier_t *start;
     pthread_barrier_t *finish;
     libevent_worker *all;
-    unsigned workers;
-    unsigned idx;
-    unsigned conns;
-    unsigned k;
+    unsigned int workers;
+    unsigned int idx;
+    unsigned int conns;
+    unsigned int k;
 
     struct event_base *base;
     int async_fd;
     struct event *async_ev;
     _Atomic bool alive;
 
-    _Atomic unsigned churn_reqs;
-    unsigned churn_pending;
-    unsigned churn_seq;
+    _Atomic unsigned int churn_reqs;
+    unsigned int churn_pending;
+    unsigned int churn_seq;
 
     libevent_conn *conn;
     uint64_t msgs_target;
@@ -947,7 +947,7 @@ static void *libevent_workers_thread(void *ptr)
         abort();
     }
 
-    for (unsigned i = 0; i < w->conns; ++i) {
+    for (unsigned int i = 0; i < w->conns; ++i) {
         int fds[2];
         if (socketpair_nb(fds) != 0) {
             abort();
@@ -974,13 +974,13 @@ static void *libevent_workers_thread(void *ptr)
     char in[MSG_SIZE];
     memset(in, 'x', sizeof(in));
 
-    unsigned seq = 0;
+    unsigned int seq = 0;
     while (w->done_msgs < w->msgs_target) {
-        unsigned idxs[IO_BATCH];
-        unsigned nidx = 0;
+        unsigned int idxs[IO_BATCH];
+        unsigned int nidx = 0;
 
         for (; nidx < IO_BATCH && w->sent_msgs < w->msgs_target; ++nidx) {
-            unsigned idx = seq++ % w->conns;
+            unsigned int idx = seq++ % w->conns;
             idxs[nidx] = idx;
 
             libevent_conn *c = &w->conn[idx];
@@ -998,8 +998,8 @@ static void *libevent_workers_thread(void *ptr)
             event_base_loop(w->base, EVLOOP_NONBLOCK);
         }
 
-        for (unsigned i = 0; i < nidx; ++i) {
-            unsigned idx = idxs[i];
+        for (unsigned int i = 0; i < nidx; ++i) {
+            unsigned int idx = idxs[i];
             libevent_conn *c = &w->conn[idx];
             for (;;) {
                 char out[4096];
@@ -1020,13 +1020,13 @@ static void *libevent_workers_thread(void *ptr)
         }
 
         while (w->churn_pending && w->sent_msgs == w->done_msgs) {
-            unsigned idx = w->churn_seq++ % w->conns;
+            unsigned int idx = w->churn_seq++ % w->conns;
             libevent_conn_reopen(&w->conn[idx]);
             --w->churn_pending;
         }
 
         if (w->done_msgs >= next_async && w->workers > 1) {
-            unsigned dst = (w->idx + 1) % w->workers;
+            unsigned int dst = (w->idx + 1) % w->workers;
             libevent_worker *t = &w->all[dst];
             if (atomic_load_explicit(&t->alive, memory_order_acquire)) {
                 atomic_fetch_add_explicit(&t->churn_reqs, 1, memory_order_release);
@@ -1039,7 +1039,7 @@ static void *libevent_workers_thread(void *ptr)
     atomic_store_explicit(&w->alive, false, memory_order_release);
     pthread_barrier_wait(w->finish);
 
-    for (unsigned i = 0; i < w->conns; ++i) {
+    for (unsigned int i = 0; i < w->conns; ++i) {
         libevent_conn *c = &w->conn[i];
         event_del(c->ev);
         event_free(c->ev);
@@ -1055,7 +1055,7 @@ static void *libevent_workers_thread(void *ptr)
     return NULL;
 }
 
-static void bench_libevent_workers(unsigned workers, unsigned conns, unsigned k)
+static void bench_libevent_workers(unsigned int workers, unsigned int conns, unsigned int k)
 {
     pthread_barrier_t ready;
     pthread_barrier_t start;
@@ -1075,7 +1075,7 @@ static void bench_libevent_workers(unsigned workers, unsigned conns, unsigned k)
         abort();
     }
 
-    for (unsigned i = 0; i < workers; ++i) {
+    for (unsigned int i = 0; i < workers; ++i) {
         w[i].ready = &ready;
         w[i].start = &start;
         w[i].finish = &finish;
@@ -1095,7 +1095,7 @@ static void bench_libevent_workers(unsigned workers, unsigned conns, unsigned k)
     uint64_t start_ns = get_time_ns();
     pthread_barrier_wait(&start);
 
-    for (unsigned i = 0; i < workers; ++i) {
+    for (unsigned int i = 0; i < workers; ++i) {
         pthread_join(w[i].thr, NULL);
     }
     uint64_t end_ns = get_time_ns();
@@ -1129,17 +1129,17 @@ struct libuv_worker {
     pthread_barrier_t *start;
     pthread_barrier_t *finish;
     libuv_worker *all;
-    unsigned workers;
-    unsigned idx;
-    unsigned conns;
-    unsigned k;
+    unsigned int workers;
+    unsigned int idx;
+    unsigned int conns;
+    unsigned int k;
 
     uv_loop_t *loop;
     uv_async_t async;
     _Atomic bool alive;
-    _Atomic unsigned churn_reqs;
-    unsigned churn_pending;
-    unsigned churn_seq;
+    _Atomic unsigned int churn_reqs;
+    unsigned int churn_pending;
+    unsigned int churn_seq;
 
     libuv_conn *conn;
     uint64_t msgs_target;
@@ -1286,7 +1286,7 @@ static void *libuv_workers_thread(void *ptr)
     w->async.data = w;
     atomic_store_explicit(&w->alive, true, memory_order_release);
 
-    for (unsigned i = 0; i < w->conns; ++i) {
+    for (unsigned int i = 0; i < w->conns; ++i) {
         libuv_conn *c = &w->conn[i];
         c->w = w;
         c->poll = NULL;
@@ -1306,13 +1306,13 @@ static void *libuv_workers_thread(void *ptr)
     char in[MSG_SIZE];
     memset(in, 'x', sizeof(in));
 
-    unsigned seq = 0;
+    unsigned int seq = 0;
     while (w->done_msgs < w->msgs_target) {
-        unsigned idxs[IO_BATCH];
-        unsigned nidx = 0;
+        unsigned int idxs[IO_BATCH];
+        unsigned int nidx = 0;
 
         for (; nidx < IO_BATCH && w->sent_msgs < w->msgs_target; ++nidx) {
-            unsigned idx = seq++ % w->conns;
+            unsigned int idx = seq++ % w->conns;
             idxs[nidx] = idx;
 
             libuv_conn *c = &w->conn[idx];
@@ -1330,8 +1330,8 @@ static void *libuv_workers_thread(void *ptr)
             uv_run(w->loop, UV_RUN_NOWAIT);
         }
 
-        for (unsigned i = 0; i < nidx; ++i) {
-            unsigned idx = idxs[i];
+        for (unsigned int i = 0; i < nidx; ++i) {
+            unsigned int idx = idxs[i];
             libuv_conn *c = &w->conn[idx];
             for (;;) {
                 char out[4096];
@@ -1352,13 +1352,13 @@ static void *libuv_workers_thread(void *ptr)
         }
 
         while (w->churn_pending && w->sent_msgs == w->done_msgs) {
-            unsigned idx = w->churn_seq++ % w->conns;
+            unsigned int idx = w->churn_seq++ % w->conns;
             libuv_conn_reopen(w, &w->conn[idx]);
             --w->churn_pending;
         }
 
         if (w->done_msgs >= next_async && w->workers > 1) {
-            unsigned dst = (w->idx + 1) % w->workers;
+            unsigned int dst = (w->idx + 1) % w->workers;
             libuv_worker *t = &w->all[dst];
             if (atomic_load_explicit(&t->alive, memory_order_acquire)) {
                 atomic_fetch_add_explicit(&t->churn_reqs, 1, memory_order_release);
@@ -1373,7 +1373,7 @@ static void *libuv_workers_thread(void *ptr)
 
     uv_close((uv_handle_t *)&w->async, NULL);
 
-    for (unsigned i = 0; i < w->conns; ++i) {
+    for (unsigned int i = 0; i < w->conns; ++i) {
         libuv_conn *c = &w->conn[i];
         if (c->poll && !uv_is_closing((uv_handle_t *)c->poll)) {
             uv_poll_stop(c->poll);
@@ -1403,7 +1403,7 @@ static void *libuv_workers_thread(void *ptr)
     return NULL;
 }
 
-static void bench_libuv_workers(unsigned workers, unsigned conns, unsigned k)
+static void bench_libuv_workers(unsigned int workers, unsigned int conns, unsigned int k)
 {
     pthread_barrier_t ready;
     pthread_barrier_t start;
@@ -1423,7 +1423,7 @@ static void bench_libuv_workers(unsigned workers, unsigned conns, unsigned k)
         abort();
     }
 
-    for (unsigned i = 0; i < workers; ++i) {
+    for (unsigned int i = 0; i < workers; ++i) {
         w[i].ready = &ready;
         w[i].start = &start;
         w[i].finish = &finish;
@@ -1443,7 +1443,7 @@ static void bench_libuv_workers(unsigned workers, unsigned conns, unsigned k)
     uint64_t start_ns = get_time_ns();
     pthread_barrier_wait(&start);
 
-    for (unsigned i = 0; i < workers; ++i) {
+    for (unsigned int i = 0; i < workers; ++i) {
         pthread_join(w[i].thr, NULL);
     }
     uint64_t end_ns = get_time_ns();
@@ -1461,9 +1461,9 @@ int main(void)
 {
     print_versions();
 
-    unsigned workers = env_u32("EVIO_BENCH_WORKERS", DEF_WORKERS, MAX_WORKERS);
-    unsigned conns = env_u32("EVIO_BENCH_CONNS", DEF_CONNS, MAX_CONNS);
-    unsigned k = env_u32("EVIO_BENCH_K", DEF_K, MAX_K);
+    unsigned int workers = env_u32("EVIO_BENCH_WORKERS", DEF_WORKERS, MAX_WORKERS);
+    unsigned int conns = env_u32("EVIO_BENCH_CONNS", DEF_CONNS, MAX_CONNS);
+    unsigned int k = env_u32("EVIO_BENCH_K", DEF_K, MAX_K);
 
     if (workers == 0) {
         workers = 1;

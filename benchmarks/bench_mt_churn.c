@@ -35,7 +35,7 @@ static void dummy_libev_cb(struct ev_loop *loop, ev_io *w, int revents) {}
 static void dummy_libuv_cb(uv_poll_t *w, int status, int events) {}
 static void dummy_libevent_cb(evutil_socket_t fd, short what, void *arg) {}
 
-static unsigned env_u32(const char *name, unsigned def, unsigned max)
+static unsigned int env_u32(const char *name, unsigned int def, unsigned int max)
 {
     const char *s = getenv(name);
     if (!s || !*s) {
@@ -54,22 +54,22 @@ static unsigned env_u32(const char *name, unsigned def, unsigned max)
     if (v > max) {
         return max;
     }
-    return (unsigned)v;
+    return (unsigned int)v;
 }
 
 typedef struct {
     pthread_barrier_t *ready;
     pthread_barrier_t *start;
-    unsigned watchers;
-    unsigned iterations;
+    unsigned int watchers;
+    unsigned int iterations;
     bool use_uring;
 } evio_thr_arg;
 
 static void *evio_churn_thread(void *ptr)
 {
     evio_thr_arg *arg = ptr;
-    unsigned watchers = arg->watchers;
-    unsigned iterations = arg->iterations;
+    unsigned int watchers = arg->watchers;
+    unsigned int iterations = arg->iterations;
 
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
@@ -80,7 +80,7 @@ static void *evio_churn_thread(void *ptr)
     if (!fds) {
         abort();
     }
-    for (unsigned i = 0; i < watchers; ++i) {
+    for (unsigned int i = 0; i < watchers; ++i) {
         fds[i] = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
         if (fds[i] < 0) {
             abort();
@@ -100,20 +100,20 @@ static void *evio_churn_thread(void *ptr)
         abort();
     }
 
-    for (unsigned i = 0; i < watchers; ++i) {
+    for (unsigned int i = 0; i < watchers; ++i) {
         evio_poll_init(&io[i], dummy_evio_cb, fds[i], EVIO_READ | EVIO_WRITE);
     }
 
     pthread_barrier_wait(arg->ready);
     pthread_barrier_wait(arg->start);
 
-    for (unsigned i = 0; i < iterations; ++i) {
-        for (unsigned j = 0; j < watchers; ++j) {
+    for (unsigned int i = 0; i < iterations; ++i) {
+        for (unsigned int j = 0; j < watchers; ++j) {
             evio_poll_start(loop, &io[j]);
         }
         evio_run(loop, EVIO_RUN_NOWAIT);
 
-        for (unsigned j = 0; j < watchers; ++j) {
+        for (unsigned int j = 0; j < watchers; ++j) {
             evio_poll_stop(loop, &io[j]);
         }
         evio_run(loop, EVIO_RUN_NOWAIT);
@@ -121,7 +121,7 @@ static void *evio_churn_thread(void *ptr)
 
     evio_loop_free(loop);
 
-    for (unsigned i = 0; i < watchers; ++i) {
+    for (unsigned int i = 0; i < watchers; ++i) {
         close(fds[i]);
     }
 
@@ -130,7 +130,8 @@ static void *evio_churn_thread(void *ptr)
     return NULL;
 }
 
-static void bench_evio_churn_mt(unsigned threads, unsigned watchers, unsigned iterations, bool use_uring)
+static void bench_evio_churn_mt(unsigned int threads, unsigned int watchers, unsigned int iterations,
+                                bool use_uring)
 {
     pthread_t *thr = malloc(sizeof(*thr) * threads);
     if (!thr) {
@@ -153,7 +154,7 @@ static void bench_evio_churn_mt(unsigned threads, unsigned watchers, unsigned it
         .use_uring = use_uring,
     };
 
-    for (unsigned i = 0; i < threads; ++i) {
+    for (unsigned int i = 0; i < threads; ++i) {
         if (pthread_create(&thr[i], NULL, evio_churn_thread, &arg) != 0) {
             abort();
         }
@@ -163,7 +164,7 @@ static void bench_evio_churn_mt(unsigned threads, unsigned watchers, unsigned it
     uint64_t t0 = get_time_ns();
     pthread_barrier_wait(&start);
 
-    for (unsigned i = 0; i < threads; ++i) {
+    for (unsigned int i = 0; i < threads; ++i) {
         if (pthread_join(thr[i], NULL) != 0) {
             abort();
         }
@@ -183,15 +184,15 @@ static void bench_evio_churn_mt(unsigned threads, unsigned watchers, unsigned it
 typedef struct {
     pthread_barrier_t *ready;
     pthread_barrier_t *start;
-    unsigned watchers;
-    unsigned iterations;
+    unsigned int watchers;
+    unsigned int iterations;
 } libev_thr_arg;
 
 static void *libev_churn_thread(void *ptr)
 {
     libev_thr_arg *arg = ptr;
-    unsigned watchers = arg->watchers;
-    unsigned iterations = arg->iterations;
+    unsigned int watchers = arg->watchers;
+    unsigned int iterations = arg->iterations;
 
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
@@ -202,7 +203,7 @@ static void *libev_churn_thread(void *ptr)
     if (!fds) {
         abort();
     }
-    for (unsigned i = 0; i < watchers; ++i) {
+    for (unsigned int i = 0; i < watchers; ++i) {
         fds[i] = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
         if (fds[i] < 0) {
             abort();
@@ -222,20 +223,20 @@ static void *libev_churn_thread(void *ptr)
         abort();
     }
 
-    for (unsigned i = 0; i < watchers; ++i) {
+    for (unsigned int i = 0; i < watchers; ++i) {
         ev_io_init(&io[i], dummy_libev_cb, fds[i], LIBEV_READ | LIBEV_WRITE);
     }
 
     pthread_barrier_wait(arg->ready);
     pthread_barrier_wait(arg->start);
 
-    for (unsigned i = 0; i < iterations; ++i) {
-        for (unsigned j = 0; j < watchers; ++j) {
+    for (unsigned int i = 0; i < iterations; ++i) {
+        for (unsigned int j = 0; j < watchers; ++j) {
             ev_io_start(loop, &io[j]);
         }
         ev_run(loop, EVRUN_NOWAIT);
 
-        for (unsigned j = 0; j < watchers; ++j) {
+        for (unsigned int j = 0; j < watchers; ++j) {
             ev_io_stop(loop, &io[j]);
         }
         ev_run(loop, EVRUN_NOWAIT);
@@ -243,7 +244,7 @@ static void *libev_churn_thread(void *ptr)
 
     ev_loop_destroy(loop);
 
-    for (unsigned i = 0; i < watchers; ++i) {
+    for (unsigned int i = 0; i < watchers; ++i) {
         close(fds[i]);
     }
 
@@ -255,15 +256,15 @@ static void *libev_churn_thread(void *ptr)
 typedef struct {
     pthread_barrier_t *ready;
     pthread_barrier_t *start;
-    unsigned watchers;
-    unsigned iterations;
+    unsigned int watchers;
+    unsigned int iterations;
 } libevent_thr_arg;
 
 static void *libevent_churn_thread(void *ptr)
 {
     libevent_thr_arg *arg = ptr;
-    unsigned watchers = arg->watchers;
-    unsigned iterations = arg->iterations;
+    unsigned int watchers = arg->watchers;
+    unsigned int iterations = arg->iterations;
 
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
@@ -274,16 +275,12 @@ static void *libevent_churn_thread(void *ptr)
     if (!fds) {
         abort();
     }
-    for (unsigned i = 0; i < watchers; ++i) {
+    for (unsigned int i = 0; i < watchers; ++i) {
         fds[i] = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
         if (fds[i] < 0) {
             abort();
         }
     }
-
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 
     struct event_base *base = event_base_new();
     if (!base) {
@@ -294,7 +291,7 @@ static void *libevent_churn_thread(void *ptr)
     if (!ev) {
         abort();
     }
-    for (unsigned i = 0; i < watchers; ++i) {
+    for (unsigned int i = 0; i < watchers; ++i) {
         ev[i] = event_new(base, fds[i], LIBEVENT_READ | LIBEVENT_WRITE, dummy_libevent_cb, NULL);
         if (!ev[i]) {
             abort();
@@ -304,33 +301,37 @@ static void *libevent_churn_thread(void *ptr)
     pthread_barrier_wait(arg->ready);
     pthread_barrier_wait(arg->start);
 
-    for (unsigned i = 0; i < iterations; ++i) {
-        for (unsigned j = 0; j < watchers; ++j) {
+    for (unsigned int i = 0; i < iterations; ++i) {
+        for (unsigned int j = 0; j < watchers; ++j) {
             event_add(ev[j], NULL);
         }
         event_base_loop(base, EVLOOP_NONBLOCK);
 
-        for (unsigned j = 0; j < watchers; ++j) {
+        for (unsigned int j = 0; j < watchers; ++j) {
             event_del(ev[j]);
         }
         event_base_loop(base, EVLOOP_NONBLOCK);
     }
 
-    for (unsigned i = 0; i < watchers; ++i) {
+    for (unsigned int i = 0; i < watchers; ++i) {
         event_free(ev[i]);
     }
     free(ev);
 
     event_base_free(base);
 
-    for (unsigned i = 0; i < watchers; ++i) {
+    for (unsigned int i = 0; i < watchers; ++i) {
         close(fds[i]);
     }
     free(fds);
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
     return NULL;
 }
 
-static void bench_libevent_churn_mt(unsigned threads, unsigned watchers, unsigned iterations)
+static void bench_libevent_churn_mt(unsigned int threads, unsigned int watchers, unsigned int iterations)
 {
     pthread_t *thr = malloc(sizeof(*thr) * threads);
     if (!thr) {
@@ -352,7 +353,7 @@ static void bench_libevent_churn_mt(unsigned threads, unsigned watchers, unsigne
         .iterations = iterations,
     };
 
-    for (unsigned i = 0; i < threads; ++i) {
+    for (unsigned int i = 0; i < threads; ++i) {
         if (pthread_create(&thr[i], NULL, libevent_churn_thread, &arg) != 0) {
             abort();
         }
@@ -363,7 +364,7 @@ static void bench_libevent_churn_mt(unsigned threads, unsigned watchers, unsigne
     uint64_t start_ns = get_time_ns();
     pthread_barrier_wait(&start);
 
-    for (unsigned i = 0; i < threads; ++i) {
+    for (unsigned int i = 0; i < threads; ++i) {
         pthread_join(thr[i], NULL);
     }
     uint64_t end_ns = get_time_ns();
@@ -376,7 +377,7 @@ static void bench_libevent_churn_mt(unsigned threads, unsigned watchers, unsigne
     snprintf(name, sizeof(name), "libevent-t%u", threads);
     print_benchmark("poll_churn_mt", name, end_ns - start_ns, (uint64_t)threads * watchers * iterations * 2);
 }
-static void bench_libev_churn_mt(unsigned threads, unsigned watchers, unsigned iterations)
+static void bench_libev_churn_mt(unsigned int threads, unsigned int watchers, unsigned int iterations)
 {
     pthread_t *thr = malloc(sizeof(*thr) * threads);
     if (!thr) {
@@ -398,7 +399,7 @@ static void bench_libev_churn_mt(unsigned threads, unsigned watchers, unsigned i
         .iterations = iterations,
     };
 
-    for (unsigned i = 0; i < threads; ++i) {
+    for (unsigned int i = 0; i < threads; ++i) {
         if (pthread_create(&thr[i], NULL, libev_churn_thread, &arg) != 0) {
             abort();
         }
@@ -408,7 +409,7 @@ static void bench_libev_churn_mt(unsigned threads, unsigned watchers, unsigned i
     uint64_t t0 = get_time_ns();
     pthread_barrier_wait(&start);
 
-    for (unsigned i = 0; i < threads; ++i) {
+    for (unsigned int i = 0; i < threads; ++i) {
         if (pthread_join(thr[i], NULL) != 0) {
             abort();
         }
@@ -428,15 +429,15 @@ static void bench_libev_churn_mt(unsigned threads, unsigned watchers, unsigned i
 typedef struct {
     pthread_barrier_t *ready;
     pthread_barrier_t *start;
-    unsigned watchers;
-    unsigned iterations;
+    unsigned int watchers;
+    unsigned int iterations;
 } libuv_thr_arg;
 
 static void *libuv_churn_thread(void *ptr)
 {
     libuv_thr_arg *arg = ptr;
-    unsigned watchers = arg->watchers;
-    unsigned iterations = arg->iterations;
+    unsigned int watchers = arg->watchers;
+    unsigned int iterations = arg->iterations;
 
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
@@ -447,7 +448,7 @@ static void *libuv_churn_thread(void *ptr)
     if (!fds) {
         abort();
     }
-    for (unsigned i = 0; i < watchers; ++i) {
+    for (unsigned int i = 0; i < watchers; ++i) {
         fds[i] = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
         if (fds[i] < 0) {
             abort();
@@ -467,26 +468,26 @@ static void *libuv_churn_thread(void *ptr)
         abort();
     }
 
-    for (unsigned i = 0; i < watchers; ++i) {
+    for (unsigned int i = 0; i < watchers; ++i) {
         uv_poll_init(loop, &io[i], fds[i]);
     }
 
     pthread_barrier_wait(arg->ready);
     pthread_barrier_wait(arg->start);
 
-    for (unsigned i = 0; i < iterations; ++i) {
-        for (unsigned j = 0; j < watchers; ++j) {
+    for (unsigned int i = 0; i < iterations; ++i) {
+        for (unsigned int j = 0; j < watchers; ++j) {
             uv_poll_start(&io[j], UV_READABLE | UV_WRITABLE, dummy_libuv_cb);
         }
         uv_run(loop, UV_RUN_NOWAIT);
 
-        for (unsigned j = 0; j < watchers; ++j) {
+        for (unsigned int j = 0; j < watchers; ++j) {
             uv_poll_stop(&io[j]);
         }
         uv_run(loop, UV_RUN_NOWAIT);
     }
 
-    for (unsigned i = 0; i < watchers; ++i) {
+    for (unsigned int i = 0; i < watchers; ++i) {
         if (!uv_is_closing((uv_handle_t *)&io[i])) {
             uv_close((uv_handle_t *)&io[i], NULL);
         }
@@ -496,7 +497,7 @@ static void *libuv_churn_thread(void *ptr)
     uv_loop_close(loop);
     free(loop);
 
-    for (unsigned i = 0; i < watchers; ++i) {
+    for (unsigned int i = 0; i < watchers; ++i) {
         close(fds[i]);
     }
 
@@ -505,7 +506,7 @@ static void *libuv_churn_thread(void *ptr)
     return NULL;
 }
 
-static void bench_libuv_churn_mt(unsigned threads, unsigned watchers, unsigned iterations)
+static void bench_libuv_churn_mt(unsigned int threads, unsigned int watchers, unsigned int iterations)
 {
     pthread_t *thr = malloc(sizeof(*thr) * threads);
     if (!thr) {
@@ -527,7 +528,7 @@ static void bench_libuv_churn_mt(unsigned threads, unsigned watchers, unsigned i
         .iterations = iterations,
     };
 
-    for (unsigned i = 0; i < threads; ++i) {
+    for (unsigned int i = 0; i < threads; ++i) {
         if (pthread_create(&thr[i], NULL, libuv_churn_thread, &arg) != 0) {
             abort();
         }
@@ -537,7 +538,7 @@ static void bench_libuv_churn_mt(unsigned threads, unsigned watchers, unsigned i
     uint64_t t0 = get_time_ns();
     pthread_barrier_wait(&start);
 
-    for (unsigned i = 0; i < threads; ++i) {
+    for (unsigned int i = 0; i < threads; ++i) {
         if (pthread_join(thr[i], NULL) != 0) {
             abort();
         }
@@ -558,15 +559,15 @@ int main(void)
 {
     print_versions();
 
-    unsigned watchers = env_u32("EVIO_BENCH_MT_WATCHERS", DEF_WATCHERS, MAX_WATCHERS);
-    unsigned iterations = env_u32("EVIO_BENCH_MT_ITERS", DEF_ITERATIONS, MAX_ITERATIONS);
+    unsigned int watchers = env_u32("EVIO_BENCH_MT_WATCHERS", DEF_WATCHERS, MAX_WATCHERS);
+    unsigned int iterations = env_u32("EVIO_BENCH_MT_ITERS", DEF_ITERATIONS, MAX_ITERATIONS);
 
-    unsigned ncpu = (unsigned)sysconf(_SC_NPROCESSORS_ONLN);
+    unsigned int ncpu = (unsigned int)sysconf(_SC_NPROCESSORS_ONLN);
     if (!ncpu) {
         ncpu = 1;
     }
 
-    const unsigned max_threads = ncpu < 8 ? ncpu : 8;
+    const unsigned int max_threads = ncpu < 8 ? ncpu : 8;
 
     struct rlimit lim;
     if (getrlimit(RLIMIT_NOFILE, &lim) == 0 && lim.rlim_cur != RLIM_INFINITY) {
@@ -577,14 +578,14 @@ int main(void)
             max_watchers = 1;
         }
         if (watchers > max_watchers) {
-            watchers = (unsigned)max_watchers;
+            watchers = (unsigned int)max_watchers;
         }
     }
 
-    const unsigned thread_counts[] = { 1, 2, 4, 8 };
+    const unsigned int thread_counts[] = { 1, 2, 4, 8 };
 
     for (size_t i = 0; i < sizeof(thread_counts) / sizeof(thread_counts[0]); ++i) {
-        unsigned t = thread_counts[i];
+        unsigned int t = thread_counts[i];
         if (t > max_threads) {
             continue;
         }

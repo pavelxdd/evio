@@ -437,7 +437,7 @@ TEST(test_evio_signal_process_pending_stale_active)
     assert_non_null(loop);
 
     int signum = SIGUSR1;
-    unsigned idx = (unsigned)(signum - 1);
+    unsigned int idx = (unsigned int)(signum - 1);
     loop->sig_active[idx >> 6] |= 1ull << (idx & 63);
 
     atomic_store_explicit(&loop->signal_pending.value, 1, memory_order_release);

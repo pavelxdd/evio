@@ -221,15 +221,6 @@ void evio_uring_flush(evio_loop *loop)
                     __evio_fallthrough;
 
                 default:
-                    /*
-                     * The epoll_ctl update did not take effect. Roll back the
-                     * generation counter so that any previously registered
-                     * epoll_event data.u64 continues to match (avoids silently
-                     * dropping events as "stale").
-                     *
-                     * The generation increment happens in evio_poll_update()
-                     * when preparing the new epoll_event.
-                     */
                     loop->fds.ptr[fd].gen--;
                     evio_queue_fd_errors(loop, fd);
                     break;
@@ -274,9 +265,9 @@ static int evio_uring_probe_epoll_ctl(void)
 
 #ifdef IORING_REGISTER_PROBE
     if (__evio_likely(!EVIO_URING_PROBE_DISABLE_REGISTER_PROBE())) {
-        unsigned ops_len = 256;
+        unsigned int ops_len = 256;
 #ifdef IORING_OP_LAST
-        ops_len = (unsigned)IORING_OP_LAST;
+        ops_len = (unsigned int)IORING_OP_LAST;
 #endif
         size_t bytes = sizeof(struct io_uring_probe) +
                        ops_len * sizeof(struct io_uring_probe_op);
@@ -286,7 +277,7 @@ static int evio_uring_probe_epoll_ctl(void)
 
         int ret = EVIO_URING_REGISTER(fd, IORING_REGISTER_PROBE, probe, ops_len);
         if (ret == 0) {
-            for (unsigned i = 0; i < probe->ops_len; ++i) {
+            for (unsigned int i = 0; i < probe->ops_len; ++i) {
                 const struct io_uring_probe_op *op = &probe->ops[i];
                 if (op->op == IORING_OP_EPOLL_CTL) {
                     supported = (op->flags & 1u) != 0;
@@ -416,9 +407,6 @@ static int evio_uring_probe_epoll_ctl(void)
             } else if (res == -EINVAL) {
                 supported = false;
                 result = 0;
-            } else {
-                supported = false;
-                result = -1;
             }
         }
     }
@@ -431,8 +419,6 @@ static int evio_uring_probe_epoll_ctl(void)
     }
     munmap(sqptr, sqmap_len);
     close(fd);
-
-    (void)supported;
     return result;
 }
 
