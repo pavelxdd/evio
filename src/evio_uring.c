@@ -204,19 +204,22 @@ void evio_uring_flush(evio_loop *loop)
                         evio_uring_ctl(loop, EPOLL_CTL_MOD, fd, ev);
                         break;
                     }
-                /* FALLTHROUGH */
+                    __evio_fallthrough;
+
                 case -ENOENT:
                     if (op == EPOLL_CTL_MOD && res == -ENOENT) {
                         evio_uring_ctl(loop, EPOLL_CTL_ADD, fd, ev);
                         break;
                     }
-                /* FALLTHROUGH */
+                    __evio_fallthrough;
+
                 case -EPERM:
                     if (res == -EPERM) {
                         evio_queue_fd_error(loop, fd);
                         break;
                     }
-                /* FALLTHROUGH */
+                    __evio_fallthrough;
+
                 default:
                     /*
                      * The epoll_ctl update did not take effect. Roll back the

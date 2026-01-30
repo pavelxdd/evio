@@ -82,6 +82,14 @@
 #   endif
 #endif
 
+#ifndef __evio_fallthrough
+#   if __evio_has_attribute(__fallthrough__)
+#       define __evio_fallthrough __attribute__((__fallthrough__))
+#   else
+#       define __evio_fallthrough ((void)0)
+#   endif
+#endif
+
 #ifndef __evio_has_builtin
 #   ifdef __has_builtin
 #       define __evio_has_builtin(x) __has_builtin(x)
