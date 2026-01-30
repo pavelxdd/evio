@@ -1,7 +1,7 @@
+#include <errno.h>
+
 #include "evio_core.h"
 #include "evio_utils.h"
-
-#include <errno.h>
 
 static struct {
     evio_abort_cb cb;
@@ -109,11 +109,16 @@ void evio_abort(const char *restrict file, int line,
 char *evio_strerror(int err, char *data, size_t size)
 {
     const char *desc = strerrordesc_np(err);
+    const char *name = strerrorname_np(err);
+
     if (__evio_unlikely(!desc)) {
         snprintf(data, size, "Unknown error %d", err);
+    } else if (__evio_unlikely(!name)) {
+        snprintf(data, size, "%s", desc);
     } else {
-        snprintf(data, size, "%s (%s)", desc, strerrorname_np(err));
+        snprintf(data, size, "%s (%s)", desc, name);
     }
+
     return data;
 }
 

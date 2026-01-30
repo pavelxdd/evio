@@ -119,6 +119,12 @@ void evio_uring_ctl(evio_loop *loop, int op, int fd, const struct epoll_event *e
     uint32_t mask = iou->sqmask;
     uint32_t tail = *iou->sqtail;
     uint32_t head = evio_uring_load(iou->sqhead);
+
+    if (__evio_unlikely(((tail + 1) & mask) == (head & mask))) {
+        evio_uring_flush(loop);
+        head = evio_uring_load(iou->sqhead);
+    }
+
     uint32_t slot = tail & mask;
 
     struct epoll_event *event = &iou->events[slot];
@@ -138,10 +144,6 @@ void evio_uring_ctl(evio_loop *loop, int op, int fd, const struct epoll_event *e
 
     evio_uring_store(iou->sqtail, ++tail);
     ++loop->iou_count;
-
-    if ((head & mask) == (tail & mask)) {
-        evio_uring_flush(loop);
-    }
 }
 
 void evio_uring_flush(evio_loop *loop)

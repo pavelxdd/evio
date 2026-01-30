@@ -705,3 +705,18 @@ TEST(test_evio_timer_update_boundary_overflow)
 
     evio_loop_free(loop);
 }
+
+TEST(test_evio_timer_start_overflow)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_timer tm;
+    evio_timer_init(&tm, generic_cb, 0);
+
+    evio_timer_start(loop, &tm, EVIO_TIME_MAX);
+    assert_false(tm.active);
+    assert_int_equal(evio_refcount(loop), 0);
+
+    evio_loop_free(loop);
+}

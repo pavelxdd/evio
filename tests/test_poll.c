@@ -1506,3 +1506,30 @@ TEST(test_evio_poll_stop_middle_updates_active)
     close(fds[1]);
     evio_loop_free(loop);
 }
+
+TEST(test_evio_poll_get_fd)
+{
+    evio_poll io;
+    evio_poll_init(&io, dummy_cb, 42, EVIO_READ);
+
+    assert_int_equal(evio_poll_get_fd(&io), 42);
+
+    evio_poll_set(&io, 123, EVIO_WRITE);
+    assert_int_equal(evio_poll_get_fd(&io), 123);
+}
+
+TEST(test_evio_poll_get_events)
+{
+    evio_poll io;
+    evio_poll_init(&io, dummy_cb, 0, EVIO_READ);
+    assert_int_equal(evio_poll_get_events(&io), EVIO_READ);
+
+    evio_poll_modify(&io, EVIO_WRITE);
+    assert_int_equal(evio_poll_get_events(&io), EVIO_WRITE);
+
+    evio_poll_modify(&io, EVIO_READ | EVIO_WRITE);
+    assert_int_equal(evio_poll_get_events(&io), EVIO_READ | EVIO_WRITE);
+
+    evio_poll_modify(&io, 0);
+    assert_int_equal(evio_poll_get_events(&io), 0);
+}

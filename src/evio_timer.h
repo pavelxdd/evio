@@ -39,6 +39,7 @@ void evio_timer_init(evio_timer *w, evio_cb cb, evio_time repeat)
 
 /**
  * @brief Starts a timer watcher with a given timeout.
+ * @details If `loop->time + after` overflows, the timer is not started (no-op).
  * @param loop The event loop.
  * @param w The timer watcher to start.
  * @param after The initial timeout in nanoseconds.

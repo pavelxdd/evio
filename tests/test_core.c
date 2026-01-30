@@ -684,3 +684,22 @@ TEST(test_evio_core_asserts_flush_fd_error_backptr)
 
     evio_loop_free(loop);
 }
+
+TEST(test_evio_is_active)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, dummy_cb);
+
+    assert_false(evio_is_active(&prepare.base));
+
+    evio_prepare_start(loop, &prepare);
+    assert_true(evio_is_active(&prepare.base));
+
+    evio_prepare_stop(loop, &prepare);
+    assert_false(evio_is_active(&prepare.base));
+
+    evio_loop_free(loop);
+}

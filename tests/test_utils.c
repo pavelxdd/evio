@@ -38,6 +38,14 @@ TEST(test_evio_strerror_invalid)
 #endif
 }
 
+TEST(test_evio_strerror_negative)
+{
+    char buf[EVIO_STRERROR_SIZE];
+    char *err_str = evio_strerror(-1, buf, sizeof(buf));
+    assert_ptr_equal(err_str, buf);
+    assert_string_not_equal(err_str, "");
+}
+
 TEST(test_evio_strerror_erange)
 {
     char buf[18];
@@ -47,7 +55,7 @@ TEST(test_evio_strerror_erange)
 #ifdef __GLIBC__
     assert_string_equal(err_str, "Unknown error 999");
 #else
-    assert_string_equal(err_str, "No error informati");
+    assert_string_equal(err_str, "No error informat");
 #endif
 }
 

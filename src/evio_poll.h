@@ -16,6 +16,28 @@ typedef struct evio_poll {
 } evio_poll;
 
 /**
+ * @brief Gets the file descriptor associated with a poll watcher.
+ * @param w The poll watcher.
+ * @return The file descriptor.
+ */
+static inline __evio_nonnull(1) __evio_nodiscard
+int evio_poll_get_fd(const evio_poll *w)
+{
+    return w->fd;
+}
+
+/**
+ * @brief Gets the event mask of a poll watcher.
+ * @param w The poll watcher.
+ * @return The event mask (`EVIO_READ` and/or `EVIO_WRITE`).
+ */
+static inline __evio_nonnull(1) __evio_nodiscard
+evio_mask evio_poll_get_events(const evio_poll *w)
+{
+    return w->emask & (EVIO_READ | EVIO_WRITE);
+}
+
+/**
  * @brief Modifies the event mask for a poll watcher.
  * @param w The poll watcher to modify.
  * @param emask The new event mask (`EVIO_READ` or `EVIO_WRITE`).

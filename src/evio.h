@@ -300,6 +300,17 @@ void evio_init(evio_base *base, evio_cb cb)
 }
 
 /**
+ * @brief Checks if a watcher is currently active.
+ * @param base The watcher base to check.
+ * @return `true` if active, `false` otherwise.
+ */
+static inline __evio_nonnull(1) __evio_nodiscard
+bool evio_is_active(const evio_base *base)
+{
+    return base->active != 0;
+}
+
+/**
  * @brief Invokes a watcher's callback with the given event mask.
  * @param loop The event loop.
  * @param base The watcher whose callback should be invoked.
