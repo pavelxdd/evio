@@ -1,14 +1,28 @@
 #include <stdlib.h>
+#include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <sys/eventfd.h>
 
 #include <ev.h>
+enum {
+    LIBEV_READ  = EV_READ,
+    LIBEV_WRITE = EV_WRITE,
+};
+#undef EV_READ
+#undef EV_WRITE
+
+#include <event2/event.h>
+enum {
+    LIBEVENT_READ  = EV_READ,
+    LIBEVENT_WRITE = EV_WRITE,
+};
 #include <uv.h>
 
 #include "evio.h"
 #include "bench.h"
 
-#define NUM_PINGS 300000
+#define NUM_PINGS 100000
 
 // --- evio ---
 typedef struct {
@@ -46,10 +60,10 @@ static void *evio_sender_thread(void *arg)
     return NULL;
 }
 
-static void bench_evio_async(void)
+static void bench_evio_async(bool use_uring)
 {
     evio_async_ctx ctx = {
-        .loop = evio_loop_new(EVIO_FLAG_URING),
+        .loop = evio_loop_new(use_uring ? EVIO_FLAG_URING : EVIO_FLAG_NONE),
     };
     pthread_mutex_init(&ctx.mutex, NULL);
     pthread_cond_init(&ctx.cond, NULL);
@@ -65,7 +79,7 @@ static void bench_evio_async(void)
     uint64_t end = get_time_ns();
     pthread_join(sender, NULL);
 
-    print_benchmark("async_ping_pong", "evio", end - start, NUM_PINGS);
+    print_benchmark("async_ping_pong", use_uring ? "evio-uring" : "evio", end - start, NUM_PINGS);
     evio_loop_free(ctx.loop);
     pthread_mutex_destroy(&ctx.mutex);
     pthread_cond_destroy(&ctx.cond);
@@ -128,6 +142,104 @@ static void bench_libev_async(void)
 
     print_benchmark("async_ping_pong", "libev", end - start, NUM_PINGS);
     ev_loop_destroy(ctx.loop);
+    pthread_mutex_destroy(&ctx.mutex);
+    pthread_cond_destroy(&ctx.cond);
+}
+
+// --- libevent ---
+typedef struct {
+    struct event_base *base;
+    struct event *ev;
+    int fd;
+    size_t count;
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+} libevent_async_ctx;
+
+static void libevent_async_cb(evutil_socket_t fd, short what, void *arg)
+{
+    (void)fd;
+    (void)what;
+
+    libevent_async_ctx *ctx = arg;
+    eventfd_t total = 0;
+    for (;;) {
+        eventfd_t val = 0;
+        ssize_t n = read(ctx->fd, &val, sizeof(val));
+        if (n > 0) {
+            total += val;
+            continue;
+        }
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
+        break;
+    }
+
+    pthread_mutex_lock(&ctx->mutex);
+    ctx->count += (size_t)total;
+    if (ctx->count >= NUM_PINGS) {
+        event_base_loopbreak(ctx->base);
+    }
+    pthread_cond_broadcast(&ctx->cond);
+    pthread_mutex_unlock(&ctx->mutex);
+}
+
+static void *libevent_sender_thread(void *arg)
+{
+    libevent_async_ctx *ctx = arg;
+    for (size_t i = 0; i < NUM_PINGS; ++i) {
+        eventfd_t one = 1;
+        for (;;) {
+            ssize_t n = write(ctx->fd, &one, sizeof(one));
+            if (n >= 0) {
+                break;
+            }
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN) {
+                eventfd_t tmp;
+                (void)read(ctx->fd, &tmp, sizeof(tmp));
+                continue;
+            }
+            break;
+        }
+
+        pthread_mutex_lock(&ctx->mutex);
+        while (ctx->count <= i) {
+            pthread_cond_wait(&ctx->cond, &ctx->mutex);
+        }
+        pthread_mutex_unlock(&ctx->mutex);
+    }
+    return NULL;
+}
+
+static void bench_libevent_async(void)
+{
+    libevent_async_ctx ctx = {
+        .base = event_base_new(),
+    };
+    pthread_mutex_init(&ctx.mutex, NULL);
+    pthread_cond_init(&ctx.cond, NULL);
+
+    ctx.fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    ctx.ev = event_new(ctx.base, ctx.fd, LIBEVENT_READ | EV_PERSIST, libevent_async_cb, &ctx);
+    event_add(ctx.ev, NULL);
+
+    pthread_t sender;
+    uint64_t start = get_time_ns();
+    pthread_create(&sender, NULL, libevent_sender_thread, &ctx);
+    event_base_dispatch(ctx.base);
+    uint64_t end = get_time_ns();
+    pthread_join(sender, NULL);
+
+    print_benchmark("async_ping_pong", "libevent", end - start, NUM_PINGS);
+
+    event_del(ctx.ev);
+    event_free(ctx.ev);
+    close(ctx.fd);
+    event_base_free(ctx.base);
     pthread_mutex_destroy(&ctx.mutex);
     pthread_cond_destroy(&ctx.cond);
 }
@@ -200,8 +312,10 @@ static void bench_libuv_async(void)
 int main(void)
 {
     print_versions();
-    bench_evio_async();
+    bench_evio_async(false);
+    bench_evio_async(true);
     bench_libev_async();
+    bench_libevent_async();
     bench_libuv_async();
     return EXIT_SUCCESS;
 }

@@ -46,11 +46,11 @@ TEST(test_evio_cleanup_stopped)
     evio_cleanup_stop(loop, &cleanup);
     assert_false(cleanup.base.active);
 
-    // Stop again, should be a no-op.
+    // Stop again, no-op.
     evio_cleanup_stop(loop, &cleanup);
     assert_false(cleanup.base.active);
 
     evio_loop_free(loop);
-    // Callback should not have been called.
+    // Callback does not have been called.
     assert_int_equal(data.called, 0);
 }

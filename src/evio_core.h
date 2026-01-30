@@ -2,13 +2,7 @@
 
 /**
  * @file evio_core.h
- * @brief The central private header for the `evio` library.
- *
- * It aggregates all other internal headers and defines the core data structures,
- * such as `evio_loop`, that represent the event loop's state. It also declares
- * the internal functions that form the backbone of event processing, file
- * descriptor management, and watcher updates. This header is not part of the
- * public API.
+ * @brief Private core header (not public API).
  */
 
 // IWYU pragma: begin_exports
@@ -29,13 +23,6 @@
 // IWYU pragma: end_exports
 
 #ifndef container_of
-/**
- * @brief Expands to an expression for the container of a given struct member.
- * @param ptr A pointer to the member.
- * @param type The type of the container struct.
- * @param member The name of the member within the struct.
- * @return A pointer to the container struct.
- */
 #define container_of(ptr, type, member) \
     ((type *)((char *)(ptr) - offsetof(type, member)))
 #endif
@@ -74,11 +61,20 @@ typedef struct {
 
 /** @brief Per-signal data. */
 typedef struct {
-    EVIO_ATOMIC(int) status;    /**< Pending status from the signal handler. */
-    _Atomic(evio_loop *) loop;  /**< The loop this signal is bound to. */
-    evio_list list;             /**< List of signal watchers for this signal. */
-    struct sigaction sa_old;    /**< The original signal action. */
+    EVIO_ATOMIC_ALIGNED(int) status;    /**< Pending status from the signal handler. */
+    _Atomic(evio_loop *) loop;          /**< The loop this signal is bound to. */
+    evio_list list;                     /**< List of signal watchers for this signal. */
+    struct sigaction sa_old;            /**< The original signal action. */
 } evio_sig;
+
+/* Compile-time checks for EVIO_ATOMIC size and lock-free atomics */
+EVIO_ATOMIC_SIZE_CHECK(int);
+EVIO_ATOMIC_ALIGNED_SIZE_CHECK(int);
+
+EVIO_ATOMIC_LOCK_FREE_CHECK(int);
+EVIO_ATOMIC_LOCK_FREE_CHECK(evio_loop *);
+
+#define EVIO_SIGSET_WORDS (((NSIG - 1) + 63u) / 64u)
 
 /** @brief The internal state of an event loop. */
 struct evio_loop {
@@ -119,6 +115,7 @@ struct evio_loop {
     EVIO_LIST(struct epoll_event) events; /**< Buffer for epoll_wait results. */
 
     sigset_t sigmask;           /**< Signal mask used in epoll_pwait to block signals. */
+    uint64_t sig_active[EVIO_SIGSET_WORDS]; /**< Active signal set for this loop. */
 };
 
 /**

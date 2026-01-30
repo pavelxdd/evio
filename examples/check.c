@@ -5,8 +5,7 @@
 
 static int check_count = 0;
 
-// Check watchers run at the end of each loop iteration, after all other
-// events for that iteration have been processed.
+// Runs at the end of each loop iteration.
 static void check_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     check_count++;
@@ -20,28 +19,23 @@ static void check_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 
 int main(void)
 {
-    // 1. Initialize the event loop.
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     if (!loop) {
         fprintf(stderr, "Failed to create event loop.\n");
         return EXIT_FAILURE;
     }
 
-    // 2. Initialize a check watcher.
     evio_check w;
     evio_check_init(&w, check_cb);
 
-    // 3. Start the watcher. This keeps the loop running.
     evio_check_start(loop, &w);
 
     printf("Event loop running. Check watcher will fire on each iteration.\n");
 
-    // 4. Run the event loop.
     while (evio_run(loop, EVIO_RUN_NOWAIT)) {}
 
     printf("Event loop finished.\n");
 
-    // 5. Free the event loop.
     evio_loop_free(loop);
     return EXIT_SUCCESS;
 }

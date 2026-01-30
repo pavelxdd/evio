@@ -1,11 +1,31 @@
 #!/usr/bin/env python3
 
+import os
 import argparse
 import re
+from collections import defaultdict
+
 import matplotlib.pyplot as plt
 import numpy as np
-from collections import defaultdict
-import os
+
+def resolve_input_path(path):
+    if os.path.isdir(path):
+        cand = os.path.join(path, "benchmarklog.txt")
+        if os.path.exists(cand):
+            return cand
+        cand = os.path.join(path, "testlog.txt")
+        return cand
+
+    if os.path.exists(path):
+        return path
+
+    d = os.path.dirname(path)
+    base = os.path.basename(path)
+    if base == "benchmarklog.txt":
+        return os.path.join(d, "testlog.txt")
+    if base == "testlog.txt":
+        return os.path.join(d, "benchmarklog.txt")
+    return path
 
 def parse_log(file_path):
     # results[category][library] = value
@@ -17,6 +37,7 @@ def parse_log(file_path):
     version_patterns = {
         'evio': re.compile(r"evio:\s+([\d\.]+)"),
         'libev': re.compile(r"libev:\s+([\d\.]+)"),
+        'libevent': re.compile(r"libevent:\s+(.+)"),
         'libuv': re.compile(r"libuv:\s+([\d\.\w-]+)")
     }
 
@@ -63,6 +84,8 @@ def plot_results(results, versions, output_file):
         version_parts.append(f"evio: {versions['evio']}")
     if versions.get('libev'):
         version_parts.append(f"libev: {versions['libev']}")
+    if versions.get('libevent'):
+        version_parts.append(f"libevent: {versions['libevent']}")
     if versions.get('libuv'):
         version_parts.append(f"libuv: {versions['libuv']}")
     version_str = ", ".join(version_parts)
@@ -79,7 +102,8 @@ def plot_results(results, versions, output_file):
         libs = sorted(list(results[category].keys()))
         values = [results[category][lib] for lib in libs]
 
-        bars = ax.bar(libs, values, color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'])
+        colors = plt.get_cmap('tab10').colors
+        bars = ax.bar(libs, values, color=[colors[j % len(colors)] for j in range(len(libs))])
         ax.set_title(category.replace('_', ' ').title())
         ax.set_ylabel('Time (ns/op)')
 
@@ -90,12 +114,12 @@ def plot_results(results, versions, output_file):
     print(f"Benchmark plot saved to {output_file}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Plot benchmark results from meson's benchmarklog.txt.")
-    parser.add_argument('--input', required=True, help="Path to benchmarklog.txt")
+    parser = argparse.ArgumentParser(description="Plot benchmark results from Meson logs.")
+    parser.add_argument('--input', required=True, help="Path to meson-logs/ (or benchmarklog.txt/testlog.txt)")
     parser.add_argument('--output', required=True, help="Path to output PNG file")
     args = parser.parse_args()
 
-    results, versions = parse_log(args.input)
+    results, versions = parse_log(resolve_input_path(args.input))
     plot_results(results, versions, args.output)
 
 if __name__ == '__main__':

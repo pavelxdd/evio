@@ -3,10 +3,6 @@
 /**
  * @file evio_timer.h
  * @brief A timer watcher for scheduling time-based events.
- *
- * An `evio_timer` watcher can be configured as a one-shot timer that fires once
- * after a given delay, or as a repeating timer that fires at a regular interval.
- * This is the primary mechanism for implementing timeouts and periodic tasks.
  */
 
 #include "evio.h"
@@ -19,7 +15,6 @@ typedef struct evio_timer {
 
 /**
  * @brief Sets the repeat interval for a timer watcher.
- * A value of 0 means the timer is one-shot.
  * @param w The timer watcher to modify.
  * @param repeat The repeat interval in nanoseconds.
  */
@@ -61,8 +56,7 @@ void evio_timer_stop(evio_loop *loop, evio_timer *w);
 
 /**
  * @brief Stops a one-shot timer or restarts a repeating timer.
- * If the timer is repeating, it will be rescheduled to fire after its `repeat`
- * interval relative to the current loop time.
+ * @details Repeating timers are rescheduled relative to current loop time.
  * @param loop The event loop.
  * @param w The timer watcher to restart.
  */

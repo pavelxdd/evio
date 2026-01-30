@@ -3,12 +3,6 @@
 /**
  * @file evio_signal.h
  * @brief A signal watcher for handling POSIX signals as events.
- *
- * An `evio_signal` watcher allows an application to process signals like `SIGINT`
- * or `SIGHUP` as regular events within the main loop's thread. This is achieved
- * safely by capturing the signal in a minimal, async-signal-safe handler and
- * using an internal `eventfd` to delegate the actual processing to a callback,
- * avoiding the restrictions of running code in a signal handler context.
  */
 
 #include "evio.h"
@@ -29,6 +23,8 @@ void evio_signal_set(evio_signal *w, int signum)
 {
     EVIO_ASSERT(signum > 0);
     EVIO_ASSERT(signum < NSIG);
+    EVIO_ASSERT(signum != SIGKILL);
+    EVIO_ASSERT(signum != SIGSTOP);
     w->signum = signum;
 }
 
@@ -49,9 +45,8 @@ void evio_signal_init(evio_signal *w, evio_cb cb, int signum)
  * @brief Starts a signal watcher, making it active in the event loop.
  * @param loop The event loop.
  * @param w The signal watcher to start.
- * @warning A specific signal number can only be handled by one event loop at a
- * time within a single process. Attempting to start a watcher for the same
- * signal on a different loop will cause the program to abort.
+ * @warning One process-wide handler per signal number. Starting the same signal
+ * on a different loop aborts.
  */
 __evio_public __evio_nonnull(1, 2)
 void evio_signal_start(evio_loop *loop, evio_signal *w);

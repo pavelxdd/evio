@@ -4,10 +4,8 @@
  * @file evio_loop.h
  * @brief Public API for core event loop management.
  *
- * This module provides the functions necessary to create, run, and destroy an
- * event loop, as well as control its execution, manage its reference count,
- * and associate user data. It also includes functions for manually injecting
- * events into the loop.
+ * Loop lifecycle (`evio_loop_new` / `evio_loop_free`), execution (`evio_run` /
+ * `evio_break`), and helpers for manual event injection.
  */
 
 #include "evio.h"
@@ -22,7 +20,7 @@ evio_loop *evio_loop_new(int flags);
 
 /**
  * @brief Frees an event loop and all associated resources.
- * This will invoke any active cleanup watchers before freeing memory.
+ * Invokes cleanup watchers.
  * @param loop The event loop to free.
  */
 __evio_public __evio_nonnull(1)
@@ -30,7 +28,6 @@ void evio_loop_free(evio_loop *loop);
 
 /**
  * @brief Returns the loop's cached monotonic time in nanoseconds.
- * This time is updated at the start of each loop iteration.
  * @param loop The event loop.
  * @return The cached time in nanoseconds.
  */
@@ -39,6 +36,8 @@ evio_time evio_get_time(const evio_loop *loop);
 
 /**
  * @brief Updates the loop's cached monotonic time to the current value.
+ * @details Timers use `loop->time`. The loop updates it once per iteration; call
+ * this if you need a refresh inside a long callback or from a prepare watcher.
  * @param loop The event loop to update.
  */
 __evio_public __evio_nonnull(1)
@@ -100,22 +99,20 @@ __evio_public __evio_nonnull(1) __evio_nodiscard
 clockid_t evio_get_clockid(const evio_loop *loop);
 
 /**
- * @brief Starts the event loop.
- * The loop runs until it is stopped via `evio_break` or has no active watchers
- * with reference counts.
+ * @brief Runs the event loop.
+ * @details Returns 0 if `refcount == 0` or stopped via `EVIO_BREAK_ALL`.
+ *
  * @param loop The event loop to run.
  * @param flags Flags to control execution (e.g., `EVIO_RUN_ONCE`).
- * @return Non-zero if there are still active watchers, zero otherwise.
+ * @return 0 if there are no active watchers, non-zero otherwise.
  */
 __evio_public __evio_nonnull(1)
 int evio_run(evio_loop *loop, int flags);
 
 /**
  * @brief Requests the event loop to stop running.
- * @details This function is typically called from within a watcher callback.
- * `EVIO_BREAK_ONE` will cause the current `evio_run` to return, while
- * `EVIO_BREAK_ALL` will cause the current and all nested `evio_run` calls
- * to return.
+ * @details `EVIO_BREAK_ONE` returns from the current `evio_run`. `EVIO_BREAK_ALL`
+ * returns from the current and all nested `evio_run` calls.
  * @param loop The event loop to stop.
  * @param state The break state (`EVIO_BREAK_ONE` or `EVIO_BREAK_ALL`).
  */
@@ -158,7 +155,7 @@ void evio_feed_fd_error(evio_loop *loop, int fd);
 
 /**
  * @brief Queues signal events for all watchers on a given signal number.
- * This does not raise a POSIX signal itself but simulates its delivery.
+ * Does not raise a POSIX signal.
  * @param loop The event loop.
  * @param signum The signal number to feed.
  */
@@ -167,14 +164,7 @@ void evio_feed_signal(evio_loop *loop, int signum);
 
 /**
  * @brief Invokes all pending callbacks immediately.
- * @details This function processes all events currently in the pending queue.
- *
- * @warning This function is re-entrant. If called from within a watcher
- * callback, it will immediately begin processing any newly queued events before
- * the current callback or the original `evio_invoke_pending` call returns. This
- * results in a depth-first event processing order. While this can be a powerful
- * feature for immediate, nested event handling, developers should be mindful
- * that deep recursion can lead to stack exhaustion.
+ * @warning Re-entrant: calling from callbacks can recurse and exhaust the stack.
  * @param loop The event loop.
  */
 __evio_public __evio_nonnull(1)

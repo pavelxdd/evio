@@ -2,11 +2,13 @@
 
 /**
  * @file evio.h
- * @brief The main public header for the `evio` library.
+ * @brief Public API umbrella header.
  *
- * An application should include this single file to access all public API
- * features. It aggregates all other public headers and defines the core types,
- * enumerations, and base structures that form the foundation of the library.
+ * Include this file for the full public API.
+ *
+ * Thread-safety:
+ * - Loop API is single-threaded unless documented otherwise.
+ * - evio_async_send() is thread-safe.
  */
 
 // IWYU pragma: begin_exports
@@ -113,14 +115,16 @@
 // IWYU pragma: end_exports
 
 /**
- * @brief A bitmask for watcher events (e.g., `EVIO_READ`, `EVIO_TIMER`).
- *
- * This type is used throughout the library in callbacks and watcher setups to
- * specify which events are being handled or have occurred.
+ * @brief Watcher event bitmask (e.g., `EVIO_READ`, `EVIO_TIMER`).
  */
 typedef uint16_t evio_mask;
 
-/** @brief Event mask values for watchers. */
+/**
+ * @brief Event mask values for watchers.
+ * - Callbacks never receive EVIO_NONE.
+ * - Poll callbacks may include EVIO_POLL (internal marker).
+ * - EVIO_ERROR means the watcher was stopped before callback.
+ */
 enum evio_event_mask {
     EVIO_NONE       = 0x000, /**< No event. */
     EVIO_READ       = 0x001, /**< Read readiness on a file descriptor. */
@@ -163,13 +167,50 @@ enum evio_break_state {
 #endif
 
 /**
- * @brief Creates a cache-line aligned atomic variable to prevent false sharing.
+ * @brief Padding for EVIO_ATOMIC* to EVIO_CACHELINE.
+ * @note Uses 1 byte if sizeof(_Atomic(type)) >= EVIO_CACHELINE.
+ */
+#define EVIO_ATOMIC_PAD(type) \
+    ((EVIO_CACHELINE > sizeof(_Atomic(type))) ? \
+     (EVIO_CACHELINE - sizeof(_Atomic(type))) : 1)
+
+/**
+ * @brief Cacheline-aligned and padded atomic to reduce false sharing.
+ * @warning Over-aligned type: do not allocate with malloc().
+ * @param type The atomic type (e.g., int, bool).
+ */
+#define EVIO_ATOMIC_ALIGNED(type) struct { \
+        alignas(EVIO_CACHELINE) _Atomic(type) value; /**< The atomic value. */ \
+        char _pad[EVIO_ATOMIC_PAD(type)]; /**< Padding to prevent false sharing. */ \
+    }
+
+/**
+ * @brief Cacheline-padded atomic without over-alignment.
  * @param type The atomic type (e.g., int, bool).
  */
 #define EVIO_ATOMIC(type) struct { \
-        alignas(EVIO_CACHELINE) _Atomic(type) value; /**< The atomic value. */ \
-        char _pad[EVIO_CACHELINE - sizeof(_Atomic(type))]; /**< Padding to prevent false sharing. */ \
+        _Atomic(type) value; /**< The atomic value. */ \
+        char _pad[EVIO_ATOMIC_PAD(type)]; /**< Padding to prevent false sharing. */ \
     }
+
+/** @brief Static assertion that EVIO_ATOMIC size matches cache line size. */
+#define EVIO_ATOMIC_SIZE_CHECK(type) \
+    _Static_assert(sizeof(EVIO_ATOMIC(type)) == EVIO_CACHELINE, \
+                   "EVIO_ATOMIC(" #type ") size must equal cache line size")
+
+/** @brief Static assertion that EVIO_ATOMIC_ALIGNED size matches cache line size. */
+#define EVIO_ATOMIC_ALIGNED_SIZE_CHECK(type) \
+    _Static_assert(sizeof(EVIO_ATOMIC_ALIGNED(type)) == EVIO_CACHELINE, \
+                   "EVIO_ATOMIC_ALIGNED(" #type ") size must equal cache line size")
+
+/** @brief Static assertion that operations on `type` are always lock-free. */
+#if defined(__GNUC__) || defined(__clang__)
+#define EVIO_ATOMIC_LOCK_FREE_CHECK(type) \
+    _Static_assert(__atomic_always_lock_free(sizeof(type), 0), \
+                   "_Atomic(" #type ") must be lock-free for thread-safety")
+#else
+#define EVIO_ATOMIC_LOCK_FREE_CHECK(type)
+#endif
 
 /** @brief Represents time in nanoseconds, stored as a 64-bit unsigned integer. */
 typedef uint64_t evio_time;
@@ -217,9 +258,6 @@ typedef void (*evio_cb)(evio_loop *loop, evio_base *base, evio_mask emask);
 
 /**
  * @brief Common fields for all watcher base structures.
- * @details This internal macro defines the core members required by the event
- * loop to manage a watcher. It is exposed publicly so that custom watcher
- * types can be created, though this is an advanced use case.
  */
 #define EVIO_COMMON \
     size_t active;  /**< Non-zero if active, 0 otherwise. */ \
@@ -229,9 +267,7 @@ typedef void (*evio_cb)(evio_loop *loop, evio_base *base, evio_mask emask);
 
 /**
  * @brief Defines the base structure for all watcher types.
- * @details This macro should be the first member of any watcher struct. It uses
- * a union to allow polymorphic access via an `evio_base*` pointer, which is
- * how the library manages different watcher types generically.
+ * @details Must be first member.
  */
 #define EVIO_BASE \
     union { \
@@ -242,13 +278,7 @@ typedef void (*evio_cb)(evio_loop *loop, evio_base *base, evio_mask emask);
     }
 
 /**
- * @brief A lightweight base structure embedded in every watcher type.
- *
- * The event loop treats all concrete watcher kinds polymorphically through an
- * `evio_base *`. The `active` and `pending` fields are one-based indices used
- * internally to manage watcher lists and the pending-event queue. `data` is a
- * user-assignable pointer, and `cb` stores the callback that the loop invokes
- * when the watcher is triggered.
+ * @brief Base structure embedded in every watcher type.
  */
 struct evio_base {
     EVIO_COMMON
@@ -265,6 +295,7 @@ void evio_init(evio_base *base, evio_cb cb)
     EVIO_ASSERT(cb);
     base->active = 0;
     base->pending = 0;
+    base->data = NULL;
     base->cb = cb;
 }
 

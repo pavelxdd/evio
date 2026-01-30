@@ -1,13 +1,30 @@
 #include "test.h"
+#include "abort.h"
 
-static jmp_buf abort_jmp_buf;
-static size_t custom_abort_called;
+#include "evio_signal.h"
+#include "evio_signal_sys.h"
 
-static FILE *custom_abort_handler(void *ctx)
+static struct {
+    bool active;
+    int err;
+} evio_signal_sigaction_inject;
+
+void evio_signal_test_inject_sigaction_fail_once(int err)
 {
-    custom_abort_called++;
-    longjmp(abort_jmp_buf, 1);
-    return NULL; // GCOVR_EXCL_LINE
+    evio_signal_sigaction_inject.active = true;
+    evio_signal_sigaction_inject.err = err;
+}
+
+int evio_test_sigaction(int signum, const struct sigaction *act,
+                        struct sigaction *oldact)
+{
+    if (evio_signal_sigaction_inject.active) {
+        evio_signal_sigaction_inject.active = false;
+        errno = evio_signal_sigaction_inject.err;
+        return -1;
+    }
+
+    return sigaction(signum, act, oldact);
 }
 
 typedef struct {
@@ -37,7 +54,7 @@ TEST(test_evio_signal)
     sig.data = &data;
     evio_signal_start(loop, &sig);
 
-    // Double start should be a no-op
+    // Double start: no-op
     evio_signal_start(loop, &sig);
     assert_int_equal(evio_refcount(loop), 1);
 
@@ -49,7 +66,7 @@ TEST(test_evio_signal)
     assert_int_equal(data.emask, EVIO_SIGNAL);
 
     evio_signal_stop(loop, &sig);
-    // Double stop should be a no-op
+    // Double stop: no-op
     evio_signal_stop(loop, &sig);
     assert_int_equal(evio_refcount(loop), 0);
     evio_loop_free(loop);
@@ -71,7 +88,7 @@ TEST(test_evio_signal_multiple_watchers)
     evio_signal_init(&sig2, generic_cb, SIGUSR1);
     sig2.data = &data2;
 
-    // Start both. The sigaction should only happen once.
+    // Start both; sigaction happens once.
     evio_signal_start(loop, &sig1);
     evio_signal_start(loop, &sig2);
     assert_int_equal(evio_refcount(loop), 2);
@@ -81,11 +98,11 @@ TEST(test_evio_signal_multiple_watchers)
     assert_int_equal(data1.called, 1);
     assert_int_equal(data2.called, 1);
 
-    // Stop one. The sigaction should not be restored yet.
+    // Stop one; keep sigaction.
     evio_signal_stop(loop, &sig1);
     assert_int_equal(evio_refcount(loop), 1);
 
-    // Stop the second one. This should restore the sigaction.
+    // Stop second; restore sigaction.
     evio_signal_stop(loop, &sig2);
     assert_int_equal(evio_refcount(loop), 0);
 
@@ -126,11 +143,13 @@ TEST(test_evio_signal_concurrent_raise)
     pthread_barrier_t barrier;
     pthread_barrier_init(&barrier, NULL, 3);
 
-    pthread_t t1, t2;
     signal_thread_arg arg1 = { .signum = SIGUSR1, .barrier = &barrier };
     signal_thread_arg arg2 = { .signum = SIGUSR2, .barrier = &barrier };
 
+    pthread_t t1;
     pthread_create(&t1, NULL, signal_raiser_thread, &arg1);
+
+    pthread_t t2;
     pthread_create(&t2, NULL, signal_raiser_thread, &arg2);
 
     // Wait for threads to be ready, then unblock them.
@@ -142,7 +161,7 @@ TEST(test_evio_signal_concurrent_raise)
 
     // Both signals will have been raised. One will have set signal_pending and written to eventfd.
     // The other will only have set its own status.
-    // The loop should process both.
+    // Loop processes both.
     evio_run(loop, EVIO_RUN_ONCE);
 
     pthread_barrier_destroy(&barrier);
@@ -155,8 +174,6 @@ TEST(test_evio_signal_concurrent_raise)
     evio_loop_free(loop);
 }
 
-// Test the race condition where a signal's status is set, but the loop
-// associated with it is different from the one processing events.
 TEST(test_evio_signal_process_pending_race)
 {
     generic_cb_data data1 = { 0 };
@@ -178,23 +195,14 @@ TEST(test_evio_signal_process_pending_race)
     sig2.data = &data2;
     evio_signal_start(loop2, &sig2);
 
-    // Raise both signals. This sets the status for each signal struct and sets
-    // the `signal_pending` flag on each respective loop.
     raise(SIGUSR1);
     raise(SIGUSR2);
 
-    // Run loop2. It will call evio_signal_process_pending(loop2).
-    // Inside, it will see its own `signal_pending` flag is set.
-    // When it iterates through signals, it will process SIGUSR2 but correctly
-    // skip SIGUSR1 because it belongs to loop1.
     evio_run(loop2, EVIO_RUN_ONCE);
 
-    // Callback for loop2's watcher (sig2) should have been called.
     assert_int_equal(data2.called, 1);
-    // Callback for loop1's watcher (sig1) should NOT have been called yet.
     assert_int_equal(data1.called, 0);
 
-    // Now, run loop1 to process its pending signal.
     evio_run(loop1, EVIO_RUN_ONCE);
     assert_int_equal(data1.called, 1);
 
@@ -256,9 +264,11 @@ TEST(test_evio_signal_process_pending_stale_status)
     // delivered after its handler has been uninstalled by evio_signal_stop.
     // The raiser thread will inherit the default (unblocked) mask and can
     // receive and handle the signal.
-    sigset_t set, oldset;
+    sigset_t set;
     sigemptyset(&set);
     sigaddset(&set, SIGUSR1);
+
+    sigset_t oldset;
     pthread_sigmask(SIG_BLOCK, &set, &oldset);
 
     // Main thread: Start watcher on loop1.
@@ -282,10 +292,9 @@ TEST(test_evio_signal_process_pending_stale_status)
     // signals, it will see that the watcher for SIGUSR1 now belongs to loop2.
     // It will hit the `atomic_exchange_explicit(&sig->status.value, 0, ...)`
     // but the inner `for` loop will not run because `sig->list.count` is 0 for loop1.
-    // This covers the target branch.
     evio_run(loop1, EVIO_RUN_ONCE);
 
-    // No callback should have been called, as the event was for a stale watcher.
+    // No callback was called, as the event was for a stale watcher.
     assert_int_equal(data.called, 0);
 
     assert_int_equal(pthread_join(thread, NULL), 0);
@@ -317,12 +326,8 @@ TEST(test_evio_signal_pending_another_signal)
     // Raise only one of the two signals being watched by the loop.
     raise(SIGUSR1);
 
-    // Run the loop. When evio_signal_process_pending is called, it will iterate
-    // over all signals. For SIGUSR1, it will find status=1 and queue an event.
-    // For SIGUSR2, it will find status=0 and take the uncovered `else` path.
     evio_run(loop, EVIO_RUN_ONCE);
 
-    // Verify only the correct callback was fired.
     assert_int_equal(data1.called, 1);
     assert_int_equal(data2.called, 0);
 
@@ -344,7 +349,6 @@ TEST(test_evio_signal_real_signal)
 
     raise(SIGUSR1);
 
-    // The signal handler will write to the eventfd, waking up the loop.
     evio_run(loop, EVIO_RUN_ONCE);
 
     assert_int_equal(data.called, 1);
@@ -356,10 +360,9 @@ TEST(test_evio_signal_real_signal)
 
 TEST(test_evio_signal_multiple_loops)
 {
-    void *old_abort_ctx;
-    evio_abort_cb old_abort = evio_get_abort(&old_abort_ctx);
-    evio_set_abort(custom_abort_handler, NULL);
-    custom_abort_called = 0;
+    jmp_buf jmp;
+    struct evio_test_abort_ctx abort_ctx = { 0 };
+    evio_test_abort_ctx_begin(&abort_ctx, &jmp);
 
     evio_loop *loop1 = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop1);
@@ -374,19 +377,19 @@ TEST(test_evio_signal_multiple_loops)
     evio_signal sig2;
     evio_signal_init(&sig2, dummy_cb, SIGUSR2);
 
-    if (setjmp(abort_jmp_buf) == 0) {
-        // This should abort because SIGUSR2 is already bound to loop1
+    if (setjmp(jmp) == 0) {
+        // SIGUSR2 already bound to loop1.
         evio_signal_start(loop2, &sig2);
         fail(); // GCOVR_EXCL_LINE
     }
 
-    assert_int_equal(custom_abort_called, 1);
+    assert_int_equal(abort_ctx.called, 1);
 
     // Cleanup, this will call evio_signal_cleanup_loop
     evio_loop_free(loop1);
     evio_loop_free(loop2);
 
-    evio_set_abort(old_abort, old_abort_ctx);
+    evio_test_abort_ctx_end(&abort_ctx);
 }
 
 TEST(test_evio_signal_process_pending_skip)
@@ -412,8 +415,7 @@ TEST(test_evio_signal_process_pending_skip)
 
     raise(SIGUSR1);
 
-    // loop1 should process SIGUSR1. During processing, it will iterate all
-    // signals and skip SIGUSR2 because it's attached to loop2.
+    // loop1 processes SIGUSR1; SIGUSR2 belongs to loop2.
     evio_run(loop1, EVIO_RUN_ONCE);
     assert_int_equal(data1.called, 1);
     assert_int_equal(data2.called, 0);
@@ -425,8 +427,23 @@ TEST(test_evio_signal_process_pending_skip)
     assert_int_equal(data1.called, 1);
     assert_int_equal(data2.called, 1);
 
-    evio_loop_free(loop1); // This will clean up sig1
-    evio_loop_free(loop2); // This will clean up sig2
+    evio_loop_free(loop1);
+    evio_loop_free(loop2);
+}
+
+TEST(test_evio_signal_process_pending_stale_active)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int signum = SIGUSR1;
+    unsigned idx = (unsigned)(signum - 1);
+    loop->sig_active[idx >> 6] |= 1ull << (idx & 63);
+
+    atomic_store_explicit(&loop->signal_pending.value, 1, memory_order_release);
+    evio_signal_process_pending(loop);
+
+    evio_loop_free(loop);
 }
 
 TEST(test_evio_signal_wrong_loop)
@@ -444,7 +461,7 @@ TEST(test_evio_signal_wrong_loop)
     sig.data = &data;
     evio_signal_start(loop1, &sig);
 
-    // Feed signal to the wrong loop, should do nothing.
+    // Feed signal to the wrong loop: no-op.
     evio_feed_signal(loop2, SIGUSR1);
     evio_run(loop2, EVIO_RUN_NOWAIT);
     assert_int_equal(data.called, 0);
@@ -459,7 +476,7 @@ TEST(test_evio_signal_invalid_signum)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    // feed invalid signal, should be a no-op and not crash
+    // feed invalid signal, no-op and not crash
     evio_feed_signal(loop, -1);
     evio_feed_signal(loop, 0);
     evio_feed_signal(loop, NSIG);
@@ -478,29 +495,24 @@ TEST(test_evio_signal_invalid_signum_asserts)
 
     evio_signal sig;
 
-    // Test init with invalid signums
     expect_assert_failure(evio_signal_init(&sig, dummy_cb, 0));
     expect_assert_failure(evio_signal_init(&sig, dummy_cb, NSIG));
 
-    // Test start with invalid signums
     evio_init(&sig.base, dummy_cb);
     sig.signum = 0;
     expect_assert_failure(evio_signal_start(loop, &sig));
     sig.signum = NSIG;
     expect_assert_failure(evio_signal_start(loop, &sig));
 
-    // Setup a valid watcher for stop test
     evio_signal_init(&sig, dummy_cb, SIGUSR1);
     evio_signal_start(loop, &sig);
     assert_true(sig.active);
 
-    // Test stop with invalid signums
     sig.signum = 0;
     expect_assert_failure(evio_signal_stop(loop, &sig));
     sig.signum = NSIG;
     expect_assert_failure(evio_signal_stop(loop, &sig));
 
-    // Restore valid signum to stop cleanly
     sig.signum = SIGUSR1;
     evio_signal_stop(loop, &sig);
 
@@ -514,10 +526,87 @@ TEST(test_evio_feed_signal_no_watcher)
     assert_non_null(loop);
 
     // Feed a signal for which there is no watcher.
-    // This should be a no-op and not crash.
+    // No-op; must not crash.
     evio_feed_signal(loop, SIGUSR1);
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(data.called, 0);
 
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_signal_sigaction_fail)
+{
+    evio_signal sig = { 0 };
+    expect_assert_failure(evio_signal_set(&sig, SIGKILL));
+    expect_assert_failure(evio_signal_set(&sig, SIGSTOP));
+}
+
+TEST(test_evio_signal_sigaction_fail_stop)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_signal sig;
+    evio_signal_init(&sig, dummy_cb, SIGUSR1);
+    evio_signal_start(loop, &sig);
+
+    evio_signal_test_inject_sigaction_fail_once(EINVAL);
+    expect_assert_failure(evio_signal_stop(loop, &sig));
+
+    evio_signal_stop(loop, &sig);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_signal_sigaction_fail_cleanup)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_signal sig;
+    evio_signal_init(&sig, dummy_cb, SIGUSR1);
+    evio_signal_start(loop, &sig);
+
+    evio_signal_test_inject_sigaction_fail_once(EINVAL);
+    expect_assert_failure(evio_signal_cleanup_loop(loop));
+
+    evio_signal_cleanup_loop(loop);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_signal_stale_status_after_stop)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_signal sig;
+    evio_signal_init(&sig, generic_cb, SIGUSR1);
+    sig.data = &data;
+    evio_signal_start(loop, &sig);
+
+    // Raise the signal (sets sig->status = 1)
+    raise(SIGUSR1);
+
+    // Stop the watcher WITHOUT running the loop.
+    // Clear sig->status to prevent stale delivery.
+    evio_signal_stop(loop, &sig);
+
+    // Start the watcher again
+    evio_signal_start(loop, &sig);
+
+    // Run the loop - if status was not cleared, the callback would be called
+    // even though no new signal was raised.
+    evio_run(loop, EVIO_RUN_NOWAIT);
+
+    // No callback was called because the signal was "consumed"
+    // by the stop, and no new signal was raised after restart.
+    assert_int_equal(data.called, 0);
+
+    // Raise a new signal and verify it works
+    raise(SIGUSR1);
+    evio_run(loop, EVIO_RUN_ONCE);
+    assert_int_equal(data.called, 1);
+
+    evio_signal_stop(loop, &sig);
     evio_loop_free(loop);
 }

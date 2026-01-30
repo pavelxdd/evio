@@ -56,15 +56,13 @@ TEST(test_evio_idle_with_pending)
     size_t counter = 0;
     tm.data = &counter;
 
-    // Run once. The timer will fire. Because a timer event was pending,
-    // the idle watcher should NOT fire.
+    // Timer fired; idle watcher does not fire.
     evio_run(loop, EVIO_RUN_ONCE);
 
     assert_int_equal(counter, 1);
     assert_int_equal(data.called, 0);
 
-    // Run again. Now the timer is stopped, and no events are pending.
-    // The idle watcher should fire.
+    // Timer stopped; idle watcher fires.
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     assert_int_equal(counter, 1); // Unchanged

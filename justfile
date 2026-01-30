@@ -37,7 +37,10 @@ examples:
 
 format:
     set -euo pipefail
-    ./bin/astyle --options=.astylerc -Q -n -r "*.c" "*.h" "*.h.in"
+    { \
+      git ls-files '*.c' '*.h' '*.h.in'; \
+      git ls-files --others --exclude-standard '*.c' '*.h' '*.h.in'; \
+    } | sort -u | xargs -r ./bin/astyle --options=.astylerc -Q -n
 
 pre-commit:
     pre-commit run --all-files

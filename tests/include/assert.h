@@ -6,9 +6,7 @@ extern void mock_assert(const int result, const char *const expr,
                         const char *const file, const int line);
 
 /**
- * This helper is used to wrap mock_assert and provide a hint to the static
- * analyzer that the function does not return on failure, without creating
- * a branch that causes coverage issues.
+ * Wrap mock_assert and mark failure path as unreachable.
  */
 static inline void evio_mock_assert(const int result, const char *const expr,
                                     const char *const file, const int line)

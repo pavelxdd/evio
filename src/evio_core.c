@@ -5,8 +5,7 @@
 
 /**
  * @brief Sets the pending state of a watcher.
- * @details This encodes the pending array index and queue index into the
- * `base->pending` field, marking it as active in the pending queue.
+ * @details Encode (index, queue) into `base->pending`.
  * @param base The watcher's base structure.
  * @param index The 0-based index in the pending array.
  * @param queue The queue index (0 or 1).

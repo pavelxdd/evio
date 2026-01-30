@@ -3,12 +3,6 @@
 /**
  * @file evio_async.h
  * @brief An async watcher for thread-safe event loop wake-ups.
- *
- * An `evio_async` watcher provides a mechanism to wake up the event loop and
- * schedule a callback from any thread. The `evio_async_send()` function is the
- * only function in the `evio` API that is safe to call from a different thread
- * to interact with a running event loop. This mechanism is crucial for inter-thread
- * communication and is typically implemented using an `eventfd` for efficiency.
  */
 
 #include "evio.h"
@@ -60,8 +54,7 @@ void evio_async_stop(evio_loop *loop, evio_async *w);
 
 /**
  * @brief Sends an event to an async watcher from any thread.
- * This function is thread-safe and will wake up the event loop if it is
- * sleeping.
+ * @details Thread-safe.
  * @param loop The event loop to wake up.
  * @param w The async watcher to signal.
  */

@@ -1,6 +1,18 @@
 #include <stdlib.h>
 
 #include <ev.h>
+enum {
+    LIBEV_READ  = EV_READ,
+    LIBEV_WRITE = EV_WRITE,
+};
+#undef EV_READ
+#undef EV_WRITE
+
+#include <event2/event.h>
+enum {
+    LIBEVENT_READ  = EV_READ,
+    LIBEVENT_WRITE = EV_WRITE,
+};
 #include <uv.h>
 
 #include "evio.h"
@@ -20,9 +32,9 @@ static void evio_timeout_cb(evio_loop *loop, evio_base *base, evio_mask emask)
     evio_break(loop, EVIO_BREAK_ALL);
 }
 
-static void bench_evio_idle(void)
+static void bench_evio_idle(bool use_uring)
 {
-    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    evio_loop *loop = evio_loop_new(use_uring ? EVIO_FLAG_URING : EVIO_FLAG_NONE);
 
     evio_idle idle;
     evio_idle_init(&idle, evio_idle_cb);
@@ -39,7 +51,7 @@ static void bench_evio_idle(void)
     evio_run(loop, EVIO_RUN_DEFAULT);
     uint64_t end = get_time_ns();
 
-    print_benchmark("idle_invocations", "evio", end - start, count);
+    print_benchmark("idle_invocations", use_uring ? "evio-uring" : "evio", end - start, count);
     evio_loop_free(loop);
 }
 
@@ -76,6 +88,70 @@ static void bench_libev_idle(void)
 
     print_benchmark("idle_invocations", "libev", end - start, count);
     ev_loop_destroy(loop);
+}
+
+// --- libevent ---
+typedef struct {
+    struct event_base *base;
+    struct event *idle;
+    size_t count;
+} libevent_idle_ctx;
+
+static void libevent_idle_cb(evutil_socket_t fd, short what, void *arg)
+{
+    (void)fd;
+    (void)what;
+
+    libevent_idle_ctx *ctx = arg;
+    ++ctx->count;
+
+    struct timeval tv = { 0 };
+    event_add(ctx->idle, &tv);
+}
+
+static void libevent_timeout_cb(evutil_socket_t fd, short what, void *arg)
+{
+    (void)fd;
+    (void)what;
+
+    libevent_idle_ctx *ctx = arg;
+    event_base_loopbreak(ctx->base);
+}
+
+static void bench_libevent_idle(void)
+{
+    libevent_idle_ctx ctx = {
+        .base = event_base_new(),
+    };
+    if (!ctx.base) {
+        abort();
+    }
+
+    ctx.idle = evtimer_new(ctx.base, libevent_idle_cb, &ctx);
+    if (!ctx.idle) {
+        abort();
+    }
+    struct timeval tv0 = { 0 };
+    event_add(ctx.idle, &tv0);
+
+    struct event *timeout = evtimer_new(ctx.base, libevent_timeout_cb, &ctx);
+    if (!timeout) {
+        abort();
+    }
+    struct timeval tv = { .tv_sec = RUN_TIME_SEC, .tv_usec = 0 };
+    event_add(timeout, &tv);
+
+    uint64_t start = get_time_ns();
+    event_base_dispatch(ctx.base);
+    uint64_t end = get_time_ns();
+
+    print_benchmark("idle_invocations", "libevent", end - start, ctx.count);
+
+    event_del(timeout);
+    event_free(timeout);
+    event_del(ctx.idle);
+    event_free(ctx.idle);
+    event_base_free(ctx.base);
 }
 
 // --- libuv ---
@@ -122,8 +198,10 @@ static void bench_libuv_idle(void)
 int main(void)
 {
     print_versions();
-    bench_evio_idle();
+    bench_evio_idle(false);
+    bench_evio_idle(true);
     bench_libev_idle();
+    bench_libevent_idle();
     bench_libuv_idle();
     return EXIT_SUCCESS;
 }

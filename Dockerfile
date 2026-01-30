@@ -109,6 +109,9 @@ RUN --mount=type=bind,target=/app \
         ninja-build \
         linux-libc-dev \
         libcmocka-dev \
+        libev-dev \
+        libevent-dev \
+        libuv1-dev \
         valgrind \
         pre-commit \
         shellcheck \
@@ -122,6 +125,8 @@ RUN --mount=type=bind,target=/app \
         strace \
         python3 \
         python3-pip \
+        python3-numpy \
+        python3-matplotlib \
         zsh \
         zsh-autosuggestions \
         zsh-syntax-highlighting \

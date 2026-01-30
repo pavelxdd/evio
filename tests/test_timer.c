@@ -42,12 +42,11 @@ TEST(test_evio_timeout_huge_ns_diff)
     io.data = &data2;
     evio_poll_start(loop, &io);
 
-    // Manually set timer expiration to the maximum to create a huge nanosecond
-    // difference. Note this test may be flaky if system uptime is very small.
+    assert_int_equal(loop->timer.count, 1);
     loop->timer.ptr[0].time = EVIO_TIME_MAX;
 
     assert_int_equal(write(fds[1], "x", 1), 1);
-    evio_run(loop, EVIO_RUN_ONCE); // This will call evio_timeout
+    evio_run(loop, EVIO_RUN_ONCE);
 
     // Poll watcher fired, timer did not.
     assert_int_equal(data1.called, 0);
@@ -82,11 +81,12 @@ TEST(test_evio_timeout_huge_ms_diff)
     io.data = &data2;
     evio_poll_start(loop, &io);
 
+    assert_int_equal(loop->timer.count, 1);
     loop->timer.ptr[0].time = evio_get_time(loop) +
-                              (EVIO_TIME_C(INT_MAX) + 1) * EVIO_TIME_PER_MSEC;
+                              ((EVIO_TIME_C(INT_MAX) + 1) * EVIO_TIME_PER_MSEC);
 
     assert_int_equal(write(fds[1], "x", 1), 1);
-    evio_run(loop, EVIO_RUN_ONCE); // This will call evio_timeout
+    evio_run(loop, EVIO_RUN_ONCE);
 
     // Poll watcher fired, timer did not.
     assert_int_equal(data1.called, 0);
@@ -114,7 +114,7 @@ TEST(test_evio_timer)
     assert_int_equal(evio_refcount(loop), 1);
     assert_int_equal(data.called, 0);
 
-    // Double start should be a no-op
+    // Double start: no-op
     evio_timer_start(loop, &tm, 0);
     assert_int_equal(evio_refcount(loop), 1);
 
@@ -122,7 +122,7 @@ TEST(test_evio_timer)
     assert_int_equal(data.called, 1);
     assert_int_equal(data.emask, EVIO_TIMER);
 
-    // Timer should be stopped now (one-shot)
+    // Timer is stopped now (one-shot)
     assert_int_equal(evio_refcount(loop), 0);
 
     evio_loop_free(loop);
@@ -190,25 +190,20 @@ TEST(test_evio_timer_again_and_remaining)
     assert_int_equal(data.emask, EVIO_TIMER);
     data.called = 0;
 
-    // Timer is repeating, so it's rescheduled for 10s from now.
-    // The remaining time should be close to 10s.
     assert_true(evio_timer_remaining(loop, &tm) <= EVIO_TIME_FROM_SEC(10));
 
-    // Restart it with 'again'
     evio_timer_again(loop, &tm);
     assert_int_equal(data.called, 0);
 
-    // It should be rescheduled for another 10s from the *new* current time
     assert_true(evio_timer_remaining(loop, &tm) <= EVIO_TIME_FROM_SEC(10));
 
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(data.called, 0); // should not have fired yet
+    assert_int_equal(data.called, 0); // not fired yet
 
     evio_timer_stop(loop, &tm);
     assert_int_equal(evio_timer_remaining(loop, &tm), 0);
     assert_int_equal(evio_refcount(loop), 0);
 
-    // Test again on a stopped timer with a repeat value
     evio_timer_set(&tm, EVIO_TIME_FROM_MSEC(10));
     evio_timer_again(loop, &tm);
     assert_int_equal(evio_refcount(loop), 1); // Should be restarted
@@ -230,7 +225,7 @@ TEST(test_evio_timer_again_loop_break)
     // Start with a long timeout that won't fire.
     evio_timer_start(loop, &tm, EVIO_TIME_FROM_SEC(10));
 
-    // The loop should time out.
+    // Loop times out.
     size_t loops = run_until_called_or_timeout(loop, &data, 5, EVIO_RUN_NOWAIT);
     assert_int_equal(loops, 5);
     assert_int_equal(data.called, 0);
@@ -252,7 +247,7 @@ TEST(test_evio_timer_again_one_shot)
     assert_true(tm.active);
     assert_int_equal(evio_refcount(loop), 1);
 
-    // 'again' on a non-repeating timer should stop it.
+    // 'again' on a non-repeating timer stops it.
     evio_timer_again(loop, &tm);
     assert_false(tm.active);
     assert_int_equal(evio_refcount(loop), 0);
@@ -272,7 +267,7 @@ TEST(test_evio_timer_again_overflow)
     evio_timer_start(loop, &tm, 1);
     assert_true(tm.active);
 
-    // This should stop the timer due to overflow check in evio_timer_again.
+    // This stops the timer due to overflow check in evio_timer_again.
     evio_timer_again(loop, &tm);
     assert_false(tm.active);
     assert_int_equal(evio_refcount(loop), 0);
@@ -298,8 +293,33 @@ TEST(test_evio_timer_update_overflow)
     evio_run(loop, EVIO_RUN_ONCE);
 
     assert_int_equal(data.called, 1);
-    assert_int_equal(evio_refcount(loop), 0); // should be stopped
+    assert_int_equal(evio_refcount(loop), 0); // is stopped
     assert_false(tm.active);
+
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_timer_overflow_on_reschedule)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_timer tm;
+    evio_timer_init(&tm, generic_cb, 1000);
+    tm.data = &data;
+
+    evio_timer_start(loop, &tm, EVIO_TIME_FROM_MSEC(1));
+    assert_int_equal(loop->timer.count, 1);
+
+    loop->timer.ptr[0].time = EVIO_TIME_MAX - 500;
+
+    loop->time = EVIO_TIME_MAX - 500;
+
+    evio_timer_update(loop);
+
+    assert_false(tm.active);
+    assert_int_equal(evio_refcount(loop), 0);
 
     evio_loop_free(loop);
 }
@@ -313,7 +333,6 @@ TEST(test_evio_timer_many)
 
     evio_timer tm[MANY_TIMERS];
     for (size_t i = 0; i < MANY_TIMERS; ++i) {
-        // Use small, slightly varied timeouts to stress heap
         evio_timer_init(&tm[i], generic_cb, 0);
         tm[i].data = &data;
         evio_timer_start(loop, &tm[i], EVIO_TIME_FROM_MSEC(i + 1));
@@ -321,7 +340,6 @@ TEST(test_evio_timer_many)
 
     assert_int_equal(evio_refcount(loop), MANY_TIMERS);
 
-    // Run until all timers have fired
     while (evio_refcount(loop) > 0) {
         evio_run(loop, EVIO_RUN_ONCE);
     }
@@ -343,12 +361,11 @@ TEST(test_evio_timer_random)
     for (size_t i = 0; i < MANY_RANDOM_TIMERS; ++i) {
         evio_timer_init(&tm[i], generic_cb, 0);
         tm[i].data = &data;
-        // random timeout between 0 and 99 ms
+        // NOLINTNEXTLINE(concurrency-mt-unsafe) - single-threaded test
         evio_timer_start(loop, &tm[i], EVIO_TIME_FROM_MSEC(rand() % 100));
     }
     assert_int_equal(evio_refcount(loop), MANY_RANDOM_TIMERS);
 
-    // Run until all timers have fired
     while (evio_refcount(loop) > 0) {
         evio_run(loop, EVIO_RUN_ONCE);
     }
@@ -357,7 +374,6 @@ TEST(test_evio_timer_random)
     evio_loop_free(loop);
 }
 
-
 TEST(test_evio_timer_fast_repeat)
 {
     generic_cb_data data = { 0 };
@@ -365,7 +381,6 @@ TEST(test_evio_timer_fast_repeat)
     assert_non_null(loop);
 
     evio_timer tm;
-    // A timer that repeats every millisecond.
     evio_timer_init(&tm, generic_cb, EVIO_TIME_FROM_MSEC(1));
     tm.data = &data;
     evio_timer_start(loop, &tm, 0);
@@ -373,7 +388,6 @@ TEST(test_evio_timer_fast_repeat)
     evio_run(loop, EVIO_RUN_ONCE);
     assert_int_equal(data.called, 1);
 
-    // It should have been rescheduled.
     assert_int_equal(evio_refcount(loop), 1);
 
     evio_timer_stop(loop, &tm);
@@ -407,12 +421,12 @@ TEST(test_evio_timer_slow_callback)
     evio_run(loop, EVIO_RUN_ONCE);
     assert_int_equal(data.called, 1);
 
-    // It should have been rescheduled.
+    // It was rescheduled.
     assert_int_equal(evio_refcount(loop), 1);
     assert_true(tm.active);
 
-    // The next expiry should be <= repeat interval from the current time.
-    // This can be flaky on a slow system, but <= should be safe.
+    // The next expiry is <= repeat interval from the current time.
+    // This can be flaky on a slow system, but <= is safe.
     assert_true(evio_timer_remaining(loop, &tm) <= tm.repeat);
 
     evio_timer_stop(loop, &tm);
@@ -443,8 +457,7 @@ TEST(test_evio_timer_stop_middle)
     assert_int_equal(loop->timer.count, 3);
     assert_int_equal(evio_refcount(loop), 3);
 
-    // Stop a timer that is not the last one in the list.
-    // This will trigger the heap adjustment logic in evio_timer_stop.
+    // Middle removal.
     evio_timer_stop(loop, &tm1);
 
     assert_int_equal(loop->timer.count, 2);
@@ -469,10 +482,10 @@ TEST(test_evio_timer_overflow)
     evio_timer tm;
     evio_timer_init(&tm, generic_cb, 0);
     tm.data = &data;
-    // This should trigger the overflow check in evio_timer_start
+    // This triggers the overflow check in evio_timer_start
     evio_timer_start(loop, &tm, EVIO_TIME_MAX);
 
-    // The timer should not have been started.
+    // Timer was not started.
     assert_false(tm.active);
     assert_int_equal(evio_refcount(loop), 0);
 
@@ -493,7 +506,7 @@ TEST(test_evio_timer_again_inactive_repeat)
     assert_int_equal(evio_refcount(loop), 0);
 
     // Call 'again' on an inactive timer that has a repeat value.
-    // It should start the timer.
+    // Start inactive timer with repeat.
     evio_timer_again(loop, &tm);
 
     assert_true(tm.active);
@@ -518,7 +531,7 @@ TEST(test_evio_timer_again_inactive_norepeat)
     assert_int_equal(evio_refcount(loop), 0);
 
     // Call 'again' on an inactive, non-repeating timer.
-    // This should be a no-op.
+    // No-op.
     evio_timer_again(loop, &tm);
 
     assert_false(tm.active);
@@ -539,13 +552,156 @@ TEST(test_evio_timer_remaining_expired)
     evio_timer_start(loop, &tm, 0); // Start with 0 timeout
 
     // Before the loop runs, the timer's expiry time is loop->time + 0,
-    // which is <= loop->time. So remaining should be 0.
+    // which is <= loop->time. So remaining is 0.
     assert_int_equal(evio_timer_remaining(loop, &tm), 0);
 
     // Now run the loop to confirm it fires.
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(data.called, 1);
     assert_false(tm.active); // one-shot timer is now inactive
+
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_timer_again_boundary)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_timer tm;
+    // Set repeat to a specific value
+    evio_timer_init(&tm, generic_cb, 100);
+    tm.data = &data;
+    evio_timer_start(loop, &tm, 0);
+
+    // Set loop->time exactly at EVIO_TIME_MAX - repeat (boundary condition)
+    // Boundary: reschedule to EVIO_TIME_MAX.
+    loop->time = EVIO_TIME_MAX - 100;
+
+    // Fire the timer and reschedule
+    evio_timer_again(loop, &tm);
+
+    assert_true(tm.active);
+
+    evio_timer_stop(loop, &tm);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_timer_update_boundary)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_timer tm;
+    evio_timer_init(&tm, generic_cb, 100);
+    tm.data = &data;
+    evio_timer_start(loop, &tm, 1000);
+
+    assert_int_equal(loop->timer.count, 1);
+
+    loop->timer.ptr[0].time = EVIO_TIME_MAX - 100;
+    loop->time = EVIO_TIME_MAX - 100;
+
+    evio_timer_update(loop);
+
+    assert_true(tm.active);
+    assert_int_equal(loop->timer.ptr[0].time, EVIO_TIME_MAX);
+
+    evio_timer_stop(loop, &tm);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_timer_catchup_overflow)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_timer tm;
+    evio_timer_init(&tm, generic_cb, 1);
+    tm.data = &data;
+    evio_timer_start(loop, &tm, 1000);
+
+    assert_int_equal(loop->timer.count, 1);
+
+    loop->time = EVIO_TIME_MAX;
+    loop->timer.ptr[0].time = EVIO_TIME_MAX;
+
+    evio_timer_update(loop);
+
+    assert_false(tm.active);
+    assert_int_equal(evio_refcount(loop), 0);
+
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_timer_catchup_time_max)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_timer tm;
+    evio_timer_init(&tm, generic_cb, 1);
+    tm.data = &data;
+    evio_timer_start(loop, &tm, 1000);
+
+    assert_int_equal(loop->timer.count, 1);
+
+    loop->timer.ptr[0].time = EVIO_TIME_MAX - 1;
+    loop->time = EVIO_TIME_MAX;
+
+    evio_timer_update(loop);
+
+    assert_false(tm.active);
+    assert_int_equal(evio_refcount(loop), 0);
+
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_timer_again_boundary_overflow)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_timer tm;
+    evio_timer_init(&tm, generic_cb, 100);
+    tm.data = &data;
+    evio_timer_start(loop, &tm, 0);
+
+    loop->time = EVIO_TIME_MAX - 100 + 1;
+
+    evio_timer_again(loop, &tm);
+
+    assert_false(tm.active);
+    assert_int_equal(evio_refcount(loop), 0);
+
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_timer_update_boundary_overflow)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_timer tm;
+    evio_timer_init(&tm, generic_cb, 100);
+    tm.data = &data;
+    evio_timer_start(loop, &tm, 1000);
+
+    assert_int_equal(loop->timer.count, 1);
+
+    loop->timer.ptr[0].time = EVIO_TIME_MAX - 100 + 1;
+    loop->time = EVIO_TIME_MAX - 100 + 1;
+
+    evio_timer_update(loop);
+
+    assert_false(tm.active);
+    assert_int_equal(evio_refcount(loop), 0);
 
     evio_loop_free(loop);
 }

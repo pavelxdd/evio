@@ -6,12 +6,21 @@ void *evio_list_resize(void *ptr, size_t size, size_t count, size_t *total)
     EVIO_ASSERT(size);
     EVIO_ASSERT(count <= PTRDIFF_MAX / size);
 
+    if (__evio_unlikely(*total == 0 && count <= 1)) {
+        *total = 2;
+        return evio_reallocarray(ptr, *total, size);
+    }
+
     if (__evio_likely(*total >= count)) {
         EVIO_ASSERT(ptr);
         return ptr;
     }
 
-    *total = 1ULL << (sizeof(unsigned long long) * 8 - __builtin_clzll(count));
+    unsigned bits = (unsigned)(sizeof(unsigned long long) * 8);
+    unsigned shift = bits - __builtin_clzll((unsigned long long)(count - 1));
+
+    *total = 1ull << shift;
+
     return evio_reallocarray(ptr, *total, size);
 }
 

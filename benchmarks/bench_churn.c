@@ -3,6 +3,18 @@
 #include <fcntl.h>
 
 #include <ev.h>
+enum {
+    LIBEV_READ  = EV_READ,
+    LIBEV_WRITE = EV_WRITE,
+};
+#undef EV_READ
+#undef EV_WRITE
+
+#include <event2/event.h>
+enum {
+    LIBEVENT_READ  = EV_READ,
+    LIBEVENT_WRITE = EV_WRITE,
+};
 #include <uv.h>
 
 #include "evio.h"
@@ -15,6 +27,7 @@
 static void dummy_evio_cb(evio_loop *loop, evio_base *base, evio_mask emask) {}
 static void dummy_libev_cb(struct ev_loop *loop, ev_io *w, int revents) {}
 static void dummy_libuv_cb(uv_poll_t *w, int status, int events) {}
+static void dummy_libevent_cb(evutil_socket_t fd, short what, void *arg) {}
 
 // --- evio ---
 static void bench_evio_churn(int fds[NUM_WATCHERS], bool use_uring)
@@ -53,7 +66,7 @@ static void bench_libev_churn(int fds[NUM_WATCHERS])
     ev_io io[NUM_WATCHERS];
 
     for (size_t i = 0; i < NUM_WATCHERS; ++i) {
-        ev_io_init(&io[i], dummy_libev_cb, fds[i], EV_READ | EV_WRITE);
+        ev_io_init(&io[i], dummy_libev_cb, fds[i], LIBEV_READ | LIBEV_WRITE);
     }
 
     uint64_t start = get_time_ns();
@@ -73,6 +86,38 @@ static void bench_libev_churn(int fds[NUM_WATCHERS])
     print_benchmark("poll_churn", "libev", end - start, NUM_ITERATIONS * NUM_WATCHERS * 2);
 
     ev_loop_destroy(loop);
+}
+
+// --- libevent ---
+static void bench_libevent_churn(int fds[NUM_WATCHERS])
+{
+    struct event_base *base = event_base_new();
+    struct event *ev[NUM_WATCHERS];
+
+    for (size_t i = 0; i < NUM_WATCHERS; ++i) {
+        ev[i] = event_new(base, fds[i], LIBEVENT_READ | LIBEVENT_WRITE, dummy_libevent_cb, NULL);
+    }
+
+    uint64_t start = get_time_ns();
+    for (size_t i = 0; i < NUM_ITERATIONS; ++i) {
+        for (size_t j = 0; j < NUM_WATCHERS; ++j) {
+            event_add(ev[j], NULL);
+        }
+        event_base_loop(base, EVLOOP_NONBLOCK);
+
+        for (size_t j = 0; j < NUM_WATCHERS; ++j) {
+            event_del(ev[j]);
+        }
+        event_base_loop(base, EVLOOP_NONBLOCK);
+    }
+    uint64_t end = get_time_ns();
+
+    print_benchmark("poll_churn", "libevent", end - start, NUM_ITERATIONS * NUM_WATCHERS * 2);
+
+    for (size_t i = 0; i < NUM_WATCHERS; ++i) {
+        event_free(ev[i]);
+    }
+    event_base_free(base);
 }
 
 // --- libuv ---
@@ -134,6 +179,7 @@ int main(void)
     bench_evio_churn(fds, true);
 
     bench_libev_churn(fds);
+    bench_libevent_churn(fds);
     bench_libuv_churn(fds);
 
     for (size_t i = 0; i < NUM_WATCHERS; ++i) {

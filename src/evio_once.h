@@ -3,11 +3,6 @@
 /**
  * @file evio_once.h
  * @brief A convenient one-shot watcher that triggers on I/O or a timeout.
- *
- * This watcher simplifies a common use case by internally combining an
- * `evio_poll` watcher and an `evio_timer` watcher. It triggers its callback on
- * whichever event occurs first, and then automatically stops itself. It is
- * useful for I/O operations that need a deadline.
  */
 
 #include "evio.h"
@@ -40,7 +35,6 @@ void evio_once_start(evio_loop *loop, evio_once *w, evio_time after);
 
 /**
  * @brief Stops a once watcher.
- * Deactivates the watcher and its underlying poll/timer watchers.
  * @param loop The event loop.
  * @param w The once watcher to stop.
  */

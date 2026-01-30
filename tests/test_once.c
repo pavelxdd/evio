@@ -26,7 +26,7 @@ TEST(test_evio_once_by_poll)
     once.data = &data;
     evio_once_start(loop, &once, EVIO_TIME_FROM_SEC(10)); // Long timeout
 
-    // Double start should be a no-op
+    // Double start: no-op
     evio_once_start(loop, &once, EVIO_TIME_FROM_SEC(10));
 
     assert_int_equal(write(fds[1], "x", 1), 1);
@@ -37,7 +37,7 @@ TEST(test_evio_once_by_poll)
     assert_true(data.emask & EVIO_READ);
     assert_int_equal(evio_refcount(loop), 0);
 
-    // Double stop should be a no-op
+    // Double stop: no-op
     evio_once_stop(loop, &once);
     evio_once_stop(loop, &once);
 
@@ -66,7 +66,7 @@ TEST(test_evio_once_by_timer)
     assert_true(data.emask & EVIO_TIMER);
     assert_int_equal(evio_refcount(loop), 0);
 
-    // Double stop should be a no-op
+    // Double stop: no-op
     evio_once_stop(loop, &once);
     evio_once_stop(loop, &once);
 
@@ -95,12 +95,12 @@ TEST(test_evio_once_stop_with_pending)
     evio_feed_event(loop, &once.tm.base, EVIO_TIMER);
     assert_int_equal(evio_pending_count(loop), 3);
 
-    // Stop it. This should clear all pending events.
+    // Stop clears pending events.
     evio_once_stop(loop, &once);
     assert_int_equal(evio_pending_count(loop), 0);
     assert_int_equal(evio_refcount(loop), 0);
 
-    // Running the loop should do nothing.
+    // Run with no work.
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(data.called, 0);
 

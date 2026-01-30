@@ -100,7 +100,6 @@ static void run_child(int listen_fd, const sigset_t *parent_mask)
     exit(EXIT_SUCCESS);
 }
 
-
 // -- Parent Process Logic --
 
 // A struct to hold info about a child process
@@ -156,10 +155,9 @@ static void parent_signal_cb(evio_loop *loop, evio_base *base, evio_mask emask)
         }
     }
 
-    // We can stop the signal watcher now, we don't need to handle it again.
+    // One-shot.
     evio_signal_stop(loop, (evio_signal *)base);
 }
-
 
 int main(int argc, char *argv[])
 {

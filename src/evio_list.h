@@ -2,18 +2,13 @@
 
 /**
  * @file evio_list.h
- * @brief Internal utilities for a lightweight, resizable dynamic array (list).
- *
- * This module provides a simple and efficient way to manage collections of
- * watchers (e.g., idle, check, prepare) throughout the library, avoiding
- * heavier container abstractions. The utilities handle dynamic resizing and the
- * addition/removal of watchers from these lists.
+ * @brief Internal resizable array helpers.
  */
 
 #include "evio.h"
 
 /**
- * @brief Defines a generic dynamic array (list) structure.
+ * @brief Generic resizable array.
  * @param type The type of elements stored in the list.
  */
 #define EVIO_LIST(type) \
@@ -27,7 +22,7 @@
 typedef EVIO_LIST(evio_base *) evio_list;
 
 /**
- * @brief Resizes a list if its capacity is less than the required count.
+ * @brief Ensures list capacity >= count.
  * @param ptr The current pointer to the list's memory.
  * @param size The size of each element in the list.
  * @param count The required number of elements.
@@ -38,7 +33,7 @@ __evio_nonnull(4) __evio_nodiscard __evio_returns_nonnull
 void *evio_list_resize(void *ptr, size_t size, size_t count, size_t *total);
 
 /**
- * @brief Starts a list-based watcher by adding it to a list.
+ * @brief Adds watcher to list.
  * @param loop The event loop.
  * @param w The watcher to start.
  * @param list The list to add the watcher to.
@@ -48,7 +43,7 @@ void evio_list_start(evio_loop *loop, evio_base *base,
                      evio_list *list, bool do_ref);
 
 /**
- * @brief Stops a list-based watcher by removing it from a list.
+ * @brief Removes watcher from list.
  * @param loop The event loop.
  * @param w The watcher to stop.
  * @param list The list to remove the watcher from.

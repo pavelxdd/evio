@@ -74,3 +74,10 @@
     static void __func (void **state __evio_unused)
 
 #define TEST(__func, ...) TEST_UNIT(#__func, __func, ##__VA_ARGS__)
+
+#define TEST_SKIP() do { skip(); return; } while (0)
+#define TEST_SKIPF(fmt, ...) do { \
+        print_message("skip: " fmt "\n", ##__VA_ARGS__); \
+        skip(); \
+        return; \
+    } while (0)

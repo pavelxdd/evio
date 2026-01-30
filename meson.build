@@ -1,5 +1,5 @@
 project('evio', 'c',
-    version: '0.9.2',
+    version: '0.10.0',
     license: 'MIT',
     meson_version: '>=0.56.0',
     default_options: [
@@ -116,13 +116,9 @@ evio_sources = files(
     'src/evio_check.c',
     'src/evio_cleanup.c',
     'src/evio_once.c',
+    'src/evio_uring.c',
     'src/evio_eventfd.c',
 )
-
-if cc.has_header('linux/io_uring.h')
-    evio_sources += 'src/evio_uring.c'
-    add_project_arguments('-DEVIO_IO_URING', language: 'c')
-endif
 
 evio_headers = files(
     'src/evio.h',
@@ -184,8 +180,8 @@ if get_option('tests')
         'tests/test_check.c',
         'tests/test_cleanup.c',
         'tests/test_once.c',
-        'tests/test_eventfd.c',
         'tests/test_uring.c',
+        'tests/test_eventfd.c',
     )
 
     evio_tests = executable('evio_tests', test_sources,
@@ -277,6 +273,21 @@ if get_option('benchmarks')
         libev_dep = declare_dependency(dependencies: ev_library)
     endif
 
+    libevent_dep = dependency('libevent_core', required: false)
+    if not libevent_dep.found()
+        libevent_dep = dependency('libevent', required: false)
+    endif
+    if not libevent_dep.found()
+        if not cc.has_header('event2/event.h')
+            error('libevent header "event2/event.h" not found. Please install libevent development files.')
+        endif
+        event_library = cc.find_library('event_core', required: false)
+        if not event_library.found()
+            event_library = cc.find_library('event', required: true)
+        endif
+        libevent_dep = declare_dependency(dependencies: event_library)
+    endif
+
     libuv_dep = dependency('libuv', required: true)
     threads_dep = dependency('threads', required: true)
 
@@ -287,6 +298,8 @@ if get_option('benchmarks')
         'async',
         'idle',
         'churn',
+        'workers',
+        'mt_churn',
     ]
 
     foreach name : benchmarks
@@ -301,6 +314,7 @@ if get_option('benchmarks')
             ],
             link_with: libevio,
             dependencies: [
+                libevent_dep,
                 libev_dep,
                 libuv_dep,
                 threads_dep,
@@ -314,8 +328,15 @@ if get_option('benchmarks')
         run_target('benchmark-plot',
             command: [
                 python, current_source_dir / 'benchmarks/plot.py',
-                '--input', current_build_dir / 'meson-logs/benchmarklog.txt',
+                '--input', current_build_dir / 'meson-logs',
                 '--output', current_build_dir / 'benchmarks.png'
+            ]
+        )
+
+        run_target('benchmark-summary',
+            command: [
+                python, current_source_dir / 'benchmarks/summarize.py',
+                '--input', current_build_dir / 'meson-logs',
             ]
         )
     else

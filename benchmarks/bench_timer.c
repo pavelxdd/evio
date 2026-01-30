@@ -1,30 +1,35 @@
 #include <stdlib.h>
 
 #include <ev.h>
+enum {
+    LIBEV_READ  = EV_READ,
+    LIBEV_WRITE = EV_WRITE,
+};
+#undef EV_READ
+#undef EV_WRITE
+
+#include <event2/event.h>
+enum {
+    LIBEVENT_READ  = EV_READ,
+    LIBEVENT_WRITE = EV_WRITE,
+};
 #include <uv.h>
 
 #include "evio.h"
 #include "bench.h"
 
-// --- Common dummy callbacks for overhead benchmark ---
+// Dummy callbacks (overhead benchmark).
 static void dummy_evio_cb(evio_loop *loop, evio_base *base, evio_mask emask) {}
 static void dummy_libev_cb(struct ev_loop *loop, ev_timer *w, int revents) {}
-// For libuv, the callback is optional in uv_timer_start.
+// libuv: callback may be NULL in uv_timer_start().
 
-// =============================================================================
-//   Timer Overhead Benchmark
-// =============================================================================
-// This benchmark measures the overhead of starting and stopping a timer watcher
-// in a tight loop. It does not involve running the event loop to fire the
-// timer, focusing solely on the cost of managing the library's internal timer
-// data structures (e.g., adding to and removing from a min-heap).
-//
+// Timer start/stop overhead (no loop run).
 #define NUM_OVERHEAD_ITERATIONS 1000000
 
 // --- evio ---
-static void bench_evio_timer_overhead(void)
+static void bench_evio_timer_overhead(bool use_uring)
 {
-    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    evio_loop *loop = evio_loop_new(use_uring ? EVIO_FLAG_URING : EVIO_FLAG_NONE);
 
     evio_timer timer;
     evio_timer_init(&timer, dummy_evio_cb, 0);
@@ -36,7 +41,8 @@ static void bench_evio_timer_overhead(void)
     }
     uint64_t end = get_time_ns();
 
-    print_benchmark("timer_overhead", "evio", end - start, NUM_OVERHEAD_ITERATIONS);
+    print_benchmark("timer_overhead", use_uring ? "evio-uring" : "evio",
+                    end - start, NUM_OVERHEAD_ITERATIONS);
     evio_loop_free(loop);
 }
 
@@ -57,6 +63,35 @@ static void bench_libev_timer_overhead(void)
 
     print_benchmark("timer_overhead", "libev", end - start, NUM_OVERHEAD_ITERATIONS);
     ev_loop_destroy(loop);
+}
+
+// --- libevent ---
+static void dummy_libevent_cb(evutil_socket_t fd, short what, void *arg) {}
+
+static void bench_libevent_timer_overhead(void)
+{
+    struct event_base *base = event_base_new();
+    if (!base) {
+        abort();
+    }
+
+    struct event *timer = evtimer_new(base, dummy_libevent_cb, NULL);
+    if (!timer) {
+        abort();
+    }
+    struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
+
+    uint64_t start = get_time_ns();
+    for (size_t i = 0; i < NUM_OVERHEAD_ITERATIONS; ++i) {
+        event_add(timer, &tv);
+        event_del(timer);
+    }
+    uint64_t end = get_time_ns();
+
+    print_benchmark("timer_overhead", "libevent", end - start, NUM_OVERHEAD_ITERATIONS);
+
+    event_free(timer);
+    event_base_free(base);
 }
 
 // --- libuv ---
@@ -83,18 +118,7 @@ static void bench_libuv_timer_overhead(void)
     free(loop);
 }
 
-// =============================================================================
-//   Many Active Timers Benchmark
-// =============================================================================
-// This benchmark measures how quickly the event loop can process a "storm" of
-// timers that are all due to fire at the same time. A large number of timers
-// are started with a zero timeout, making them all ready for immediate
-// processing in the first loop iteration.
-//
-// This tests the efficiency of:
-// - Iterating through and removing many expired timers from the heap.
-// - Queueing and dispatching the corresponding callbacks.
-//
+// Many timers due at t=0.
 #define NUM_MANY_TIMERS 50000
 
 // --- evio ---
@@ -106,9 +130,9 @@ static void evio_many_cb(evio_loop *loop, evio_base *base, evio_mask emask)
     }
 }
 
-static void bench_evio_timer_many_active(void)
+static void bench_evio_timer_many_active(bool use_uring)
 {
-    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    evio_loop *loop = evio_loop_new(use_uring ? EVIO_FLAG_URING : EVIO_FLAG_NONE);
     evio_timer *timers = evio_calloc(NUM_MANY_TIMERS, sizeof(evio_timer));
 
     size_t count = 0;
@@ -123,7 +147,8 @@ static void bench_evio_timer_many_active(void)
     evio_run(loop, EVIO_RUN_DEFAULT);
     uint64_t end = get_time_ns();
 
-    print_benchmark("timer_many_active", "evio", end - start, NUM_MANY_TIMERS);
+    print_benchmark("timer_many_active", use_uring ? "evio-uring" : "evio",
+                    end - start, NUM_MANY_TIMERS);
 
     evio_free(timers);
     evio_loop_free(loop);
@@ -201,18 +226,77 @@ static void bench_libuv_timer_many_active(void)
     free(timers);
 }
 
+// --- libevent ---
+static void libevent_many_cb(evutil_socket_t fd, short what, void *arg)
+{
+    (void)fd;
+    (void)what;
+
+    struct {
+        struct event_base *base;
+        size_t *count;
+    } *ctx = arg;
+
+    if (++(*ctx->count) == NUM_MANY_TIMERS) {
+        event_base_loopbreak(ctx->base);
+    }
+}
+
+static void bench_libevent_timer_many_active(void)
+{
+    struct event_base *base = event_base_new();
+    if (!base) {
+        abort();
+    }
+    struct event **timers = calloc(NUM_MANY_TIMERS, sizeof(*timers));
+    if (!timers) {
+        abort();
+    }
+
+    size_t count = 0;
+    struct {
+        struct event_base *base;
+        size_t *count;
+    } ctx = { .base = base, .count = &count };
+
+    struct timeval tv = { 0 };
+    for (size_t i = 0; i < NUM_MANY_TIMERS; ++i) {
+        timers[i] = evtimer_new(base, libevent_many_cb, &ctx);
+        if (!timers[i]) {
+            abort();
+        }
+        event_add(timers[i], &tv);
+    }
+
+    uint64_t start = get_time_ns();
+    event_base_dispatch(base);
+    uint64_t end = get_time_ns();
+
+    print_benchmark("timer_many_active", "libevent", end - start, NUM_MANY_TIMERS);
+
+    for (size_t i = 0; i < NUM_MANY_TIMERS; ++i) {
+        event_free(timers[i]);
+    }
+    free(timers);
+    event_base_free(base);
+}
+
 int main(void)
 {
     print_versions();
 
-    bench_evio_timer_overhead();
+    bench_evio_timer_overhead(false);
+    bench_evio_timer_overhead(true);
     bench_libev_timer_overhead();
+    bench_libevent_timer_overhead();
     bench_libuv_timer_overhead();
 
     printf("\n");
 
-    bench_evio_timer_many_active();
+    bench_evio_timer_many_active(false);
+    bench_evio_timer_many_active(true);
     bench_libev_timer_many_active();
+    bench_libevent_timer_many_active();
     bench_libuv_timer_many_active();
 
     return EXIT_SUCCESS;

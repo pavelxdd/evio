@@ -4,6 +4,7 @@
 
 #include "evio_core.h"
 #include "evio_eventfd.h"
+#include "evio_eventfd_sys.h"
 
 void evio_eventfd_init(evio_loop *loop)
 {
@@ -27,17 +28,41 @@ void evio_eventfd_init(evio_loop *loop)
 }
 
 /**
+ * @brief Drains the eventfd counter.
+ * @details Retries on EINTR. On EAGAIN: nothing to drain. Other errors abort.
+ * @param fd The eventfd file descriptor.
+ */
+static void evio_eventfd_drain(int fd)
+{
+    for (eventfd_t val = 1; /**/; val = 1) {
+        ssize_t res = EVIO_EVENTFD_READ(fd, &val, sizeof(val));
+        if (__evio_likely(res >= 0)) {
+            break;
+        }
+
+        // GCOVR_EXCL_START
+        int err = errno;
+        if (err == EINTR) {
+            continue;
+        }
+        if (__evio_unlikely(err != EAGAIN)) {
+            EVIO_ABORT("eventfd read failed, error %d: %s\n",
+                       err, EVIO_STRERROR(err));
+        }
+        break;
+        // GCOVR_EXCL_STOP
+    }
+}
+
+/**
  * @brief Writes to the eventfd to signal it.
- * @details This function attempts to write to the eventfd. If the write fails
- * with EAGAIN (because the eventfd counter is at its max), it performs a read
- * to reset the counter before attempting the write again. This ensures the
- * notification is delivered.
+ * @details Retries on EINTR. On EAGAIN (counter max): drain once and retry.
  * @param fd The eventfd file descriptor.
  */
 static void evio_eventfd_notify(int fd)
 {
     for (eventfd_t val = 1; /**/; val = 1) {
-        ssize_t res = write(fd, &val, sizeof(val));
+        ssize_t res = EVIO_EVENTFD_WRITE(fd, &val, sizeof(val));
         if (__evio_likely(res >= 0)) {
             break;
         }
@@ -48,22 +73,13 @@ static void evio_eventfd_notify(int fd)
             continue;
         }
         // GCOVR_EXCL_STOP
-        if (err != EAGAIN) {
-            break;
+
+        if (__evio_unlikely(err != EAGAIN)) {
+            EVIO_ABORT("eventfd write failed, error %d: %s\n",
+                       err, EVIO_STRERROR(err));
         }
 
-        for (;;) {
-            res = read(fd, &val, sizeof(val));
-            // GCOVR_EXCL_START
-            if (__evio_likely(res >= 0)) {
-                break;
-            }
-            if (errno == EINTR) {
-                continue;
-            }
-            break;
-            // GCOVR_EXCL_STOP
-        }
+        evio_eventfd_drain(fd);
     }
 }
 
@@ -73,11 +89,9 @@ void evio_eventfd_write(evio_loop *loop)
         return;
     }
 
-    if (!atomic_load_explicit(&loop->eventfd_allow.value, memory_order_seq_cst)) {
+    if (!atomic_load_explicit(&loop->eventfd_allow.value, memory_order_acquire)) {
         return;
     }
-
-    atomic_store_explicit(&loop->event_pending.value, 0, memory_order_release);
 
     int err = errno;
     evio_eventfd_notify(loop->event.fd);

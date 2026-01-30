@@ -3,10 +3,7 @@
 /**
  * @file evio_poll.h
  * @brief An I/O watcher for monitoring file descriptor readiness.
- *
- * This is the core mechanism for integrating non-blocking I/O operations, such
- * as network sockets and pipes, with the event loop. The implementation is
- * backed by the system's `epoll` interface.
+ * @details epoll-backed. EPERM on add/mod => treated as "always ready".
  */
 
 #include "evio.h"
@@ -20,7 +17,6 @@ typedef struct evio_poll {
 
 /**
  * @brief Modifies the event mask for a poll watcher.
- * This function does not restart the watcher if it's already running.
  * @param w The poll watcher to modify.
  * @param emask The new event mask (`EVIO_READ` or `EVIO_WRITE`).
  */
@@ -32,7 +28,6 @@ void evio_poll_modify(evio_poll *w, evio_mask emask)
 
 /**
  * @brief Sets the file descriptor and event mask for a poll watcher.
- * This function does not start the watcher.
  * @param w The poll watcher to set up.
  * @param fd The file descriptor to monitor.
  * @param emask The event mask (`EVIO_READ` or `EVIO_WRITE`).
@@ -77,7 +72,6 @@ void evio_poll_stop(evio_loop *loop, evio_poll *w);
 
 /**
  * @brief Changes the file descriptor and/or events for a running poll watcher.
- * This function will restart the watcher if necessary.
  * @param loop The event loop.
  * @param w The poll watcher to change.
  * @param fd The new file descriptor.

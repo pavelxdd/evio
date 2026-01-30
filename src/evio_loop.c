@@ -5,6 +5,10 @@
 #include "evio_core.h"
 #include "evio_loop.h"
 
+#ifdef EVIO_TESTING
+void evio_test_loop_after_timeout(evio_loop *loop, int *timeout);
+#endif
+
 /**
  * @brief Gets the current monotonic time from the loop's configured clock.
  * @param loop The event loop.
@@ -26,15 +30,7 @@ evio_time evio_clock_gettime(const evio_loop *loop)
 
 /**
  * @brief Calculates the timeout for the `epoll_pwait` call.
- * @details This function determines the maximum time the event loop should
- * block waiting for I/O events.
- *  - Returns `0` (no wait) if the loop should not block, which occurs if:
- *    - The loop has no active watchers (`refcount == 0`).
- *    - An idle watcher is active, which requires the loop to spin.
- *    - An eventfd notification is pending.
- *    - The next timer has already expired.
- *  - Returns `-1` (infinite wait) if there are active watchers but no pending timers.
- *  - Otherwise, returns the time in milliseconds until the next timer expires.
+ * @details 0: don't block. -1: no timers. Otherwise: ms until next timer.
  * @param loop The event loop.
  * @return The timeout in milliseconds.
  */
@@ -75,11 +71,16 @@ evio_loop *evio_loop_new(int flags)
     }
 
     evio_loop *loop = evio_malloc(sizeof(*loop));
-    *loop = (evio_loop) {
-        .fd = fd,
-        .event.cb = evio_eventfd_cb,
-        .event.fd = -1,
-    };
+    memset(loop, 0, sizeof(*loop));
+
+    loop->fd = fd;
+    loop->event.cb = evio_eventfd_cb;
+    loop->event.fd = -1;
+
+    atomic_init(&loop->eventfd_allow.value, 0);
+    atomic_init(&loop->event_pending.value, 0);
+    atomic_init(&loop->async_pending.value, 0);
+    atomic_init(&loop->signal_pending.value, 0);
 
     if (flags & EVIO_FLAG_URING) {
         loop->iou = evio_uring_new();
@@ -162,16 +163,18 @@ void evio_update_time(evio_loop *loop)
 
 void evio_ref(evio_loop *loop)
 {
-    if (__evio_unlikely(++loop->refcount == 0)) {
+    if (__evio_unlikely(loop->refcount == SIZE_MAX)) {
         EVIO_ABORT("Invalid loop (%p) refcount\n", (void *)loop);
     }
+    ++loop->refcount;
 }
 
 void evio_unref(evio_loop *loop)
 {
-    if (__evio_unlikely(loop->refcount-- == 0)) {
+    if (__evio_unlikely(loop->refcount == 0)) {
         EVIO_ABORT("Invalid loop (%p) refcount\n", (void *)loop);
     }
+    --loop->refcount;
 }
 
 size_t evio_refcount(const evio_loop *loop)
@@ -224,11 +227,23 @@ int evio_run(evio_loop *loop, int flags)
         evio_poll_update(loop);
         loop->time = evio_clock_gettime(loop);
 
-        atomic_store_explicit(&loop->eventfd_allow.value, 1, memory_order_seq_cst);
-        evio_poll_wait(loop, (flags & EVIO_RUN_NOWAIT) ? 0 : evio_timeout(loop));
-        atomic_store_explicit(&loop->eventfd_allow.value, 0, memory_order_relaxed);
+        atomic_store_explicit(&loop->eventfd_allow.value, 1, memory_order_release);
 
-        if (atomic_load_explicit(&loop->event_pending.value, memory_order_acquire)) {
+        int timeout = (flags & EVIO_RUN_NOWAIT) ? 0 : evio_timeout(loop);
+
+#ifdef EVIO_TESTING
+        evio_test_loop_after_timeout(loop, &timeout);
+#endif
+
+        if (timeout && atomic_load_explicit(&loop->event_pending.value, memory_order_acquire)) {
+            timeout = 0;
+        }
+
+        evio_poll_wait(loop, timeout);
+        atomic_store_explicit(&loop->eventfd_allow.value, 0, memory_order_release);
+
+        if (atomic_load_explicit(&loop->event_pending.value, memory_order_acquire) &&
+            __evio_likely(!loop->event.base.pending)) {
             evio_queue_event(loop, &loop->event.base, EVIO_POLL);
         }
 

@@ -42,37 +42,49 @@ evio_realloc_cb evio_get_allocator(void **ctx)
 
 void *evio_malloc(size_t size)
 {
+    EVIO_ASSERT(size > 0);
+
     void *ptr = evio_allocator.cb(evio_allocator.ctx, NULL, size);
     if (__evio_unlikely(!ptr)) {
         EVIO_ABORT("Allocation failed\n");
     }
+
     return ptr;
 }
 
 void *evio_calloc(size_t n, size_t size)
 {
+    EVIO_ASSERT(n > 0 && size > 0);
+
     size_t total;
     if (__evio_unlikely(__builtin_mul_overflow(n, size, &total))) {
         EVIO_ABORT("Integer overflow\n");
     }
+
     return memset(evio_malloc(total), 0, total);
 }
 
 void *evio_realloc(void *ptr, size_t size)
 {
+    EVIO_ASSERT(size > 0);
+
     ptr = evio_allocator.cb(evio_allocator.ctx, ptr, size);
     if (__evio_unlikely(!ptr)) {
         EVIO_ABORT("Reallocation failed\n");
     }
+
     return ptr;
 }
 
 void *evio_reallocarray(void *ptr, size_t n, size_t size)
 {
+    EVIO_ASSERT(n > 0 && size > 0);
+
     size_t total;
     if (__evio_unlikely(__builtin_mul_overflow(n, size, &total))) {
         EVIO_ABORT("Integer overflow\n");
     }
+
     return evio_realloc(ptr, total);
 }
 

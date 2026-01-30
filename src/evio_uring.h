@@ -13,8 +13,6 @@
 
 struct epoll_event;
 
-#ifdef EVIO_IO_URING
-
 /** @brief Opaque type for an io_uring instance. */
 typedef struct evio_uring evio_uring;
 
@@ -48,25 +46,3 @@ void evio_uring_ctl(evio_loop *loop, int op, int fd, const struct epoll_event *e
  */
 __evio_nonnull(1)
 void evio_uring_flush(evio_loop *loop);
-
-#else // EVIO_IO_URING
-
-// Stubs for when io_uring is not available
-typedef void evio_uring;
-
-static inline __evio_nodiscard
-evio_uring *evio_uring_new(void)
-{
-    return NULL;
-}
-
-static inline __evio_nonnull(1)
-void evio_uring_free(evio_uring *iou) {}
-
-static inline __evio_nonnull(1, 4)
-void evio_uring_ctl(evio_loop *loop, int op, int fd, const struct epoll_event *ev) {}
-
-static inline __evio_nonnull(1)
-void evio_uring_flush(evio_loop *loop) {}
-
-#endif // EVIO_IO_URING

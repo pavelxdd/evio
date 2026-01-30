@@ -1,14 +1,5 @@
 #include "test.h"
-
-static jmp_buf abort_jmp_buf;
-static size_t custom_abort_called;
-
-static FILE *custom_abort_handler(void *ctx)
-{
-    custom_abort_called++;
-    longjmp(abort_jmp_buf, 1);
-    return NULL; // GCOVR_EXCL_LINE
-}
+#include "abort.h"
 
 TEST(test_evio_malloc)
 {
@@ -63,6 +54,28 @@ TEST(test_evio_reallocarray)
     evio_free(ptr);
 }
 
+TEST(test_evio_malloc_zero_asserts)
+{
+    expect_assert_failure(evio_malloc(0));
+}
+
+TEST(test_evio_calloc_zero_asserts)
+{
+    expect_assert_failure(evio_calloc(0, 1));
+    expect_assert_failure(evio_calloc(1, 0));
+}
+
+TEST(test_evio_realloc_zero_asserts)
+{
+    expect_assert_failure(evio_realloc(NULL, 0));
+}
+
+TEST(test_evio_reallocarray_zero_asserts)
+{
+    expect_assert_failure(evio_reallocarray(NULL, 0, 1));
+    expect_assert_failure(evio_reallocarray(NULL, 1, 0));
+}
+
 static size_t custom_alloc_count = 0;
 
 static void *custom_realloc(void *ctx, void *ptr, size_t size)
@@ -75,6 +88,30 @@ static void *custom_realloc(void *ctx, void *ptr, size_t size)
 
     free(ptr);
     return NULL;
+}
+
+static void *null_realloc(void *ctx, void *ptr, size_t size)
+{
+    (void)ctx;
+
+    if (!size) {
+        free(ptr);
+    }
+    return NULL;
+}
+
+TEST(test_evio_set_allocator_free)
+{
+    void *old_alloc_ctx;
+    evio_realloc_cb old_alloc = evio_get_allocator(&old_alloc_ctx);
+
+    evio_set_allocator(null_realloc, NULL);
+
+    void *ptr = malloc(1);
+    assert_non_null(ptr);
+    evio_free(ptr);
+
+    evio_set_allocator(old_alloc, old_alloc_ctx);
 }
 
 TEST(test_evio_custom_allocator)
@@ -107,7 +144,7 @@ TEST(test_evio_custom_allocator)
     assert_non_null(ptr);
 
     evio_free(ptr);
-    assert_int_equal(custom_alloc_count, 3); // should not have increased
+    assert_int_equal(custom_alloc_count, 3);
 }
 
 TEST(test_evio_set_allocator_null)
@@ -116,7 +153,7 @@ TEST(test_evio_set_allocator_null)
     void *old_alloc_ctx;
     evio_realloc_cb old_alloc = evio_get_allocator(&old_alloc_ctx);
 
-    // Set NULL cb, should default to evio_default_realloc
+    // Set NULL cb: default to evio_default_realloc.
     evio_set_allocator(NULL, (void *)0xdeadbeef);
 
     void *ctx;
@@ -135,98 +172,118 @@ TEST(test_evio_set_allocator_null)
 
 TEST(test_evio_malloc_overflow)
 {
-    void *old_abort_ctx;
-    evio_abort_cb old_abort = evio_get_abort(&old_abort_ctx);
-    evio_set_abort(custom_abort_handler, NULL);
-    custom_abort_called = 0;
+    jmp_buf jmp;
+    struct evio_test_abort_ctx abort_ctx = { 0 };
 
-    if (setjmp(abort_jmp_buf) == 0) {
+    void *old_alloc_ctx;
+    evio_realloc_cb old_alloc = evio_get_allocator(&old_alloc_ctx);
+    evio_set_allocator(null_realloc, NULL);
+
+    evio_test_abort_ctx_begin(&abort_ctx, &jmp);
+
+    if (setjmp(jmp) == 0) {
         evio_malloc(PTRDIFF_MAX);
         fail(); // GCOVR_EXCL_LINE
     }
 
-    assert_int_equal(custom_abort_called, 1);
-    evio_set_abort(old_abort, old_abort_ctx);
+    assert_int_equal(abort_ctx.called, 1);
+    evio_test_abort_ctx_end(&abort_ctx);
+    evio_set_allocator(old_alloc, old_alloc_ctx);
 }
 
 TEST(test_evio_calloc_overflow_size)
 {
-    void *old_abort_ctx;
-    evio_abort_cb old_abort = evio_get_abort(&old_abort_ctx);
-    evio_set_abort(custom_abort_handler, NULL);
-    custom_abort_called = 0;
+    jmp_buf jmp;
+    struct evio_test_abort_ctx abort_ctx = { 0 };
 
-    if (setjmp(abort_jmp_buf) == 0) {
+    void *old_alloc_ctx;
+    evio_realloc_cb old_alloc = evio_get_allocator(&old_alloc_ctx);
+    evio_set_allocator(null_realloc, NULL);
+
+    evio_test_abort_ctx_begin(&abort_ctx, &jmp);
+
+    if (setjmp(jmp) == 0) {
         evio_calloc(1, PTRDIFF_MAX);
         fail(); // GCOVR_EXCL_LINE
     }
 
-    assert_int_equal(custom_abort_called, 1);
-    evio_set_abort(old_abort, old_abort_ctx);
+    assert_int_equal(abort_ctx.called, 1);
+    evio_test_abort_ctx_end(&abort_ctx);
+    evio_set_allocator(old_alloc, old_alloc_ctx);
 }
 
 TEST(test_evio_calloc_overflow_mul)
 {
-    void *old_abort_ctx;
-    evio_abort_cb old_abort = evio_get_abort(&old_abort_ctx);
-    evio_set_abort(custom_abort_handler, NULL);
-    custom_abort_called = 0;
+    jmp_buf jmp;
+    struct evio_test_abort_ctx abort_ctx = { 0 };
 
-    if (setjmp(abort_jmp_buf) == 0) {
+    evio_test_abort_ctx_begin(&abort_ctx, &jmp);
+
+    if (setjmp(jmp) == 0) {
         evio_calloc(PTRDIFF_MAX, PTRDIFF_MAX);
         fail(); // GCOVR_EXCL_LINE
     }
 
-    assert_int_equal(custom_abort_called, 1);
-    evio_set_abort(old_abort, old_abort_ctx);
+    assert_int_equal(abort_ctx.called, 1);
+    evio_test_abort_ctx_end(&abort_ctx);
 }
 
 TEST(test_evio_realloc_overflow)
 {
-    void *old_abort_ctx;
-    evio_abort_cb old_abort = evio_get_abort(&old_abort_ctx);
-    evio_set_abort(custom_abort_handler, NULL);
-    custom_abort_called = 0;
+    jmp_buf jmp;
+    struct evio_test_abort_ctx abort_ctx = { 0 };
 
-    if (setjmp(abort_jmp_buf) == 0) {
+    void *old_alloc_ctx;
+    evio_realloc_cb old_alloc = evio_get_allocator(&old_alloc_ctx);
+    evio_set_allocator(null_realloc, NULL);
+
+    evio_test_abort_ctx_begin(&abort_ctx, &jmp);
+
+    if (setjmp(jmp) == 0) {
         evio_realloc(NULL, PTRDIFF_MAX);
         fail(); // GCOVR_EXCL_LINE
     }
 
-    assert_int_equal(custom_abort_called, 1);
-    evio_set_abort(old_abort, old_abort_ctx);
+    assert_int_equal(abort_ctx.called, 1);
+    evio_test_abort_ctx_end(&abort_ctx);
+    evio_set_allocator(old_alloc, old_alloc_ctx);
 }
 
 TEST(test_evio_reallocarray_overflow_size)
 {
-    void *old_abort_ctx;
-    evio_abort_cb old_abort = evio_get_abort(&old_abort_ctx);
-    evio_set_abort(custom_abort_handler, NULL);
-    custom_abort_called = 0;
+    jmp_buf jmp;
+    struct evio_test_abort_ctx abort_ctx = { 0 };
 
-    if (setjmp(abort_jmp_buf) == 0) {
+    void *old_alloc_ctx;
+    evio_realloc_cb old_alloc = evio_get_allocator(&old_alloc_ctx);
+    evio_set_allocator(null_realloc, NULL);
+
+    evio_test_abort_ctx_begin(&abort_ctx, &jmp);
+
+    if (setjmp(jmp) == 0) {
         evio_reallocarray(NULL, 1, PTRDIFF_MAX);
         fail(); // GCOVR_EXCL_LINE
     }
 
-    assert_int_equal(custom_abort_called, 1);
-    evio_set_abort(old_abort, old_abort_ctx);
+    assert_int_equal(abort_ctx.called, 1);
+    evio_test_abort_ctx_end(&abort_ctx);
+    evio_set_allocator(old_alloc, old_alloc_ctx);
 }
 
 TEST(test_evio_reallocarray_overflow_mul)
 {
-    void *old_abort_ctx;
-    evio_abort_cb old_abort = evio_get_abort(&old_abort_ctx);
-    evio_set_abort(custom_abort_handler, NULL);
-    custom_abort_called = 0;
+    jmp_buf jmp;
+    struct evio_test_abort_ctx abort_ctx = { 0 };
 
-    if (setjmp(abort_jmp_buf) == 0) {
+    evio_test_abort_ctx_begin(&abort_ctx, &jmp);
+
+    if (setjmp(jmp) == 0) {
         evio_reallocarray(NULL, PTRDIFF_MAX, PTRDIFF_MAX);
         fail(); // GCOVR_EXCL_LINE
     }
 
-    assert_int_equal(custom_abort_called, 1);
-    evio_set_abort(old_abort, old_abort_ctx);
+    assert_int_equal(abort_ctx.called, 1);
+    evio_test_abort_ctx_end(&abort_ctx);
 }
 
 static void *failing_allocator(void *ctx, void *ptr, size_t size)
@@ -236,88 +293,84 @@ static void *failing_allocator(void *ctx, void *ptr, size_t size)
 
 TEST(test_evio_malloc_failing)
 {
-    void *old_abort_ctx;
-    evio_abort_cb old_abort = evio_get_abort(&old_abort_ctx);
-
     void *old_alloc_ctx;
     evio_realloc_cb old_alloc = evio_get_allocator(&old_alloc_ctx);
 
-    evio_set_abort(custom_abort_handler, NULL);
     evio_set_allocator(failing_allocator, NULL);
 
-    custom_abort_called = 0;
-    if (setjmp(abort_jmp_buf) == 0) {
+    jmp_buf jmp;
+    struct evio_test_abort_ctx abort_ctx = { 0 };
+    evio_test_abort_ctx_begin(&abort_ctx, &jmp);
+
+    if (setjmp(jmp) == 0) {
         evio_malloc(1);
         fail(); // GCOVR_EXCL_LINE
     }
-    assert_int_equal(custom_abort_called, 1);
+    assert_int_equal(abort_ctx.called, 1);
+    evio_test_abort_ctx_end(&abort_ctx);
 
     evio_set_allocator(old_alloc, old_alloc_ctx);
-    evio_set_abort(old_abort, old_abort_ctx);
 }
 
 TEST(test_evio_calloc_failing)
 {
-    void *old_abort_ctx;
-    evio_abort_cb old_abort = evio_get_abort(&old_abort_ctx);
-
     void *old_alloc_ctx;
     evio_realloc_cb old_alloc = evio_get_allocator(&old_alloc_ctx);
 
-    evio_set_abort(custom_abort_handler, NULL);
     evio_set_allocator(failing_allocator, NULL);
 
-    custom_abort_called = 0;
-    if (setjmp(abort_jmp_buf) == 0) {
+    jmp_buf jmp;
+    struct evio_test_abort_ctx abort_ctx = { 0 };
+    evio_test_abort_ctx_begin(&abort_ctx, &jmp);
+
+    if (setjmp(jmp) == 0) {
         evio_calloc(1, 1);
         fail(); // GCOVR_EXCL_LINE
     }
-    assert_int_equal(custom_abort_called, 1);
+    assert_int_equal(abort_ctx.called, 1);
+    evio_test_abort_ctx_end(&abort_ctx);
 
     evio_set_allocator(old_alloc, old_alloc_ctx);
-    evio_set_abort(old_abort, old_abort_ctx);
 }
 
 TEST(test_evio_realloc_failing)
 {
-    void *old_abort_ctx;
-    evio_abort_cb old_abort = evio_get_abort(&old_abort_ctx);
-
     void *old_alloc_ctx;
     evio_realloc_cb old_alloc = evio_get_allocator(&old_alloc_ctx);
 
-    evio_set_abort(custom_abort_handler, NULL);
     evio_set_allocator(failing_allocator, NULL);
 
-    custom_abort_called = 0;
-    if (setjmp(abort_jmp_buf) == 0) {
+    jmp_buf jmp;
+    struct evio_test_abort_ctx abort_ctx = { 0 };
+    evio_test_abort_ctx_begin(&abort_ctx, &jmp);
+
+    if (setjmp(jmp) == 0) {
         evio_realloc(NULL, 1);
         fail(); // GCOVR_EXCL_LINE
     }
-    assert_int_equal(custom_abort_called, 1);
+    assert_int_equal(abort_ctx.called, 1);
+    evio_test_abort_ctx_end(&abort_ctx);
 
     evio_set_allocator(old_alloc, old_alloc_ctx);
-    evio_set_abort(old_abort, old_abort_ctx);
 }
 
 TEST(test_evio_reallocarray_failing)
 {
-    void *old_abort_ctx;
-    evio_abort_cb old_abort = evio_get_abort(&old_abort_ctx);
-
     void *old_alloc_ctx;
     evio_realloc_cb old_alloc = evio_get_allocator(&old_alloc_ctx);
 
-    evio_set_abort(custom_abort_handler, NULL);
     evio_set_allocator(failing_allocator, NULL);
 
-    custom_abort_called = 0;
-    if (setjmp(abort_jmp_buf) == 0) {
+    jmp_buf jmp;
+    struct evio_test_abort_ctx abort_ctx = { 0 };
+    evio_test_abort_ctx_begin(&abort_ctx, &jmp);
+
+    if (setjmp(jmp) == 0) {
         evio_reallocarray(NULL, 1, 1);
         fail(); // GCOVR_EXCL_LINE
     }
-    assert_int_equal(custom_abort_called, 1);
+    assert_int_equal(abort_ctx.called, 1);
+    evio_test_abort_ctx_end(&abort_ctx);
 
     evio_set_allocator(old_alloc, old_alloc_ctx);
-    evio_set_abort(old_abort, old_abort_ctx);
 }
