@@ -15,7 +15,7 @@ void evio_timer_start(evio_loop *loop, evio_timer *w, evio_time after)
     w->active = ++loop->timer.count;
     evio_ref(loop);
 
-    loop->timer.ptr = evio_list_resize(loop->timer.ptr, sizeof(*loop->timer.ptr),
+    loop->timer.ptr = evio_list_ensure(loop->timer.ptr, sizeof(*loop->timer.ptr),
                                        loop->timer.count, &loop->timer.total);
 
     evio_node *node = &loop->timer.ptr[w->active - 1];

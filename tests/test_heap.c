@@ -17,10 +17,10 @@ TEST(test_evio_heap_sift)
     };
     heap[1] = (evio_node) {
         .base = &b[1], .time = 20
-    }; // left child
+    };
     heap[2] = (evio_node) {
         .base = &b[2], .time = 30
-    }; // right child
+    };
     for (int i = 0; i < 3; ++i) {
         heap[i].base->active = i + 1;
     }
@@ -33,10 +33,10 @@ TEST(test_evio_heap_sift)
     };
     heap[1] = (evio_node) {
         .base = &b[1], .time = 30
-    }; // left child
+    };
     heap[2] = (evio_node) {
         .base = &b[2], .time = 20
-    }; // right child
+    };
     for (int i = 0; i < 3; ++i) {
         heap[i].base->active = i + 1;
     }
@@ -78,17 +78,12 @@ TEST(test_evio_heap_adjust_up)
 
 static bool is_min_heap(const evio_node *heap, size_t count)
 {
-    for (size_t i = 0; i < count / 2; ++i) {
-        size_t l = 2 * i + 1;
-        size_t r = l + 1;
-        size_t m = l;
-
-        if (r < count && heap[r].time < heap[l].time) {
-            m = r;
-        }
-
-        if (heap[i].time > heap[m].time) {
-            return false;
+    for (size_t i = 0; i < count; ++i) {
+        size_t c = i * 4 + 1;
+        for (size_t j = c; j < c + 4 && j < count; ++j) {
+            if (heap[i].time > heap[j].time) {
+                return false;
+            }
         }
     }
     return true;
@@ -109,11 +104,11 @@ TEST(test_is_min_heap_coverage)
     heap[1] = (evio_node) {
         .base = &b[1],
         .time = 30,
-    }; // left child
+    };
     heap[2] = (evio_node) {
         .base = &b[2],
         .time = 20,
-    }; // right child
+    };
     assert_true(is_min_heap(heap, 3));
 
     heap[0] = (evio_node) {
@@ -123,11 +118,11 @@ TEST(test_is_min_heap_coverage)
     heap[1] = (evio_node) {
         .base = &b[1],
         .time = 20,
-    }; // left child
+    };
     heap[2] = (evio_node) {
         .base = &b[2],
         .time = 30,
-    }; // right child
+    };
     assert_true(is_min_heap(heap, 3));
 
     heap[0] = (evio_node) {
@@ -169,8 +164,8 @@ TEST(test_evio_heap_adjust_down)
         evio_timer_init(&tm[i], dummy_cb, 0);
     }
 
-    evio_timer_start(loop, &tm[0], 100); // root
-    evio_timer_start(loop, &tm[1], 200); // parent of 300, 400
+    evio_timer_start(loop, &tm[0], 100);
+    evio_timer_start(loop, &tm[1], 200);
     evio_timer_start(loop, &tm[2], 110);
     evio_timer_start(loop, &tm[3], 300);
     evio_timer_start(loop, &tm[4], 400);
@@ -178,17 +173,12 @@ TEST(test_evio_heap_adjust_down)
     assert_int_equal(loop->timer.count, 5);
     assert_true(is_min_heap(loop->timer.ptr, loop->timer.count));
 
-    size_t index = tm[1].base.active - 1;
-    assert_ptr_equal(loop->timer.ptr[index].base, &tm[1].base);
-    assert_true(index > 0);
-
-    loop->timer.ptr[index].time = evio_get_time(loop) + 500;
+    loop->timer.ptr[0].time = evio_get_time(loop) + 500;
     assert_false(is_min_heap(loop->timer.ptr, loop->timer.count));
 
-    evio_heap_adjust(loop->timer.ptr, index, loop->timer.count);
+    evio_heap_adjust(loop->timer.ptr, 0, loop->timer.count);
     assert_true(is_min_heap(loop->timer.ptr, loop->timer.count));
-
-    assert_ptr_equal(loop->timer.ptr[0].base, &tm[0].base);
+    assert_ptr_equal(loop->timer.ptr[0].base, &tm[2].base);
 
     for (int i = 0; i < 5; ++i) {
         evio_timer_stop(loop, &tm[i]);

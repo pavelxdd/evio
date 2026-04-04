@@ -54,13 +54,13 @@ static int evio_timeout(evio_loop *loop)
     }
 
     const evio_time diff_ns = node->time - loop->time;
-    const evio_time diff_ms = diff_ns / EVIO_TIME_PER_MSEC;
+    const evio_time diff_ms = 1 + (diff_ns - 1) / EVIO_TIME_PER_MSEC;
 
     if (__evio_unlikely(diff_ms >= INT_MAX)) {
         return INT_MAX;
     }
 
-    return (int)diff_ms + !!(diff_ns % EVIO_TIME_PER_MSEC);
+    return (int)diff_ms;
 }
 
 evio_loop *evio_loop_new(int flags)
@@ -225,7 +225,6 @@ int evio_run(evio_loop *loop, int flags)
         }
 
         evio_poll_update(loop);
-        loop->time = evio_clock_gettime(loop);
 
         atomic_store_explicit(&loop->eventfd_allow.value, 1, memory_order_release);
 
@@ -240,7 +239,7 @@ int evio_run(evio_loop *loop, int flags)
         }
 
         evio_poll_wait(loop, timeout);
-        atomic_store_explicit(&loop->eventfd_allow.value, 0, memory_order_release);
+        atomic_store_explicit(&loop->eventfd_allow.value, 0, memory_order_relaxed);
 
         if (atomic_load_explicit(&loop->event_pending.value, memory_order_acquire) &&
             __evio_likely(!loop->event.base.pending)) {

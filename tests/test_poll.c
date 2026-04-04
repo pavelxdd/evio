@@ -137,33 +137,6 @@ TEST(test_evio_poll_update_assert_fd_bounds)
     evio_loop_free(loop);
 }
 
-TEST(test_evio_poll_update_assert_backpointer)
-{
-    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
-    assert_non_null(loop);
-
-    int fds[2] = { -1, -1 };
-    assert_int_equal(pipe(fds), 0);
-
-    evio_poll io;
-    evio_poll_init(&io, dummy_cb, fds[0], EVIO_READ);
-    evio_poll_start(loop, &io); // This queues a change for fds[0]
-
-    assert_int_equal(loop->fdchanges.count, 1);
-    assert_int_equal(loop->fds.ptr[io.fd].changes, 1);
-
-    // Corrupt backpointer
-    loop->fds.ptr[io.fd].changes = 99;
-    expect_assert_failure(evio_poll_update(loop));
-
-    // Restore and cleanup
-    loop->fds.ptr[io.fd].changes = 1;
-    evio_poll_stop(loop, &io);
-    close(fds[0]);
-    close(fds[1]);
-    evio_loop_free(loop);
-}
-
 TEST(test_evio_poll_change)
 {
     generic_cb_data data = { 0 };

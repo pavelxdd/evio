@@ -59,7 +59,7 @@ void evio_queue_event(evio_loop *loop, evio_base *base, evio_mask emask)
     const size_t index = pending->count++;
     evio_pending_set(base, index, queue);
 
-    pending->ptr = evio_list_resize(pending->ptr, sizeof(evio_pending),
+    pending->ptr = evio_list_ensure(pending->ptr, sizeof(evio_pending),
                                     pending->count, &pending->total);
 
     evio_pending *p = &pending->ptr[index];
@@ -69,7 +69,7 @@ void evio_queue_event(evio_loop *loop, evio_base *base, evio_mask emask)
 
 void evio_queue_events(evio_loop *loop, evio_base **base, size_t count, evio_mask emask)
 {
-    for (size_t i = count; i--;) {
+    for (size_t i = 0; i < count; ++i) {
         evio_queue_event(loop, base[i], emask);
     }
 }
@@ -119,7 +119,7 @@ void evio_queue_fd_error(evio_loop *loop, int fd)
 
     if (!fds->errors) {
         fds->errors = ++loop->fderrors.count;
-        loop->fderrors.ptr = evio_list_resize(loop->fderrors.ptr, sizeof(*loop->fderrors.ptr),
+        loop->fderrors.ptr = evio_list_ensure(loop->fderrors.ptr, sizeof(*loop->fderrors.ptr),
                                               loop->fderrors.count, &loop->fderrors.total);
         loop->fderrors.ptr[fds->errors - 1] = fd;
     }
@@ -133,7 +133,7 @@ void evio_queue_fd_change(evio_loop *loop, int fd, evio_flag flags)
 
     if (__evio_likely(!fds->changes)) {
         fds->changes = ++loop->fdchanges.count;
-        loop->fdchanges.ptr = evio_list_resize(loop->fdchanges.ptr, sizeof(*loop->fdchanges.ptr),
+        loop->fdchanges.ptr = evio_list_ensure(loop->fdchanges.ptr, sizeof(*loop->fdchanges.ptr),
                                                loop->fdchanges.count, &loop->fdchanges.total);
         loop->fdchanges.ptr[fds->changes - 1] = fd;
     }

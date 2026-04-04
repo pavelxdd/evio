@@ -171,7 +171,7 @@ void evio_signal_start(evio_loop *loop, evio_signal *w)
     w->active = ++sig->list.count;
     evio_ref(loop);
 
-    sig->list.ptr = evio_list_resize(sig->list.ptr, sizeof(*sig->list.ptr),
+    sig->list.ptr = evio_list_ensure(sig->list.ptr, sizeof(*sig->list.ptr),
                                      sig->list.count, &sig->list.total);
     sig->list.ptr[w->active - 1] = &w->base;
 }

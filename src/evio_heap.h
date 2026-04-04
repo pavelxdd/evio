@@ -2,7 +2,7 @@
 
 /**
  * @file evio_heap.h
- * @brief An internal binary min-heap implementation for timer management.
+ * @brief An internal 4-ary min-heap implementation for timer management.
  *
  * The heap stores `evio_node` objects, which are (time, watcher) pairs, ordered
  * by expiration time. This allows the event loop to efficiently determine the

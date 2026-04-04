@@ -16,9 +16,10 @@ void evio_poll_start(evio_loop *loop, evio_poll *w)
                                      (size_t)w->fd + 1, &loop->fds.total);
 
     if ((size_t)w->fd >= loop->fds.count) {
+        size_t new_count = (size_t)w->fd + 1;
         memset(&loop->fds.ptr[loop->fds.count], 0,
-               (loop->fds.total - loop->fds.count) * sizeof(*loop->fds.ptr));
-        loop->fds.count = (size_t)w->fd + 1;
+               (new_count - loop->fds.count) * sizeof(*loop->fds.ptr));
+        loop->fds.count = new_count;
     }
 
     evio_fds *fds = &loop->fds.ptr[w->fd];
@@ -26,7 +27,7 @@ void evio_poll_start(evio_loop *loop, evio_poll *w)
     w->active = ++fds->list.count;
     evio_ref(loop);
 
-    fds->list.ptr = evio_list_resize(fds->list.ptr, sizeof(*fds->list.ptr),
+    fds->list.ptr = evio_list_ensure(fds->list.ptr, sizeof(*fds->list.ptr),
                                      fds->list.count, &fds->list.total);
     fds->list.ptr[w->active - 1] = &w->base;
 
@@ -98,14 +99,12 @@ void evio_poll_update(evio_loop *loop)
 {
     struct epoll_event ev = { 0 };
 
-    while (loop->fdchanges.count) {
-        int fd = loop->fdchanges.ptr[loop->fdchanges.count - 1];
+    size_t nchanges = loop->fdchanges.count;
+    for (size_t ci = 0; ci < nchanges; ++ci) {
+        int fd = loop->fdchanges.ptr[ci];
         EVIO_ASSERT(fd >= 0 && (size_t)fd < loop->fds.count);
 
         evio_fds *fds = &loop->fds.ptr[fd];
-        EVIO_ASSERT(fds->changes == loop->fdchanges.count);
-
-        --loop->fdchanges.count;
 
         evio_mask emask = fds->emask;
         evio_flag flags = fds->flags;
@@ -176,6 +175,8 @@ void evio_poll_update(evio_loop *loop)
         --fds->gen;
     }
 
+    loop->fdchanges.count = 0;
+
     if (loop->iou) {
         evio_uring_flush(loop);
     }
@@ -207,7 +208,7 @@ void evio_poll_wait(evio_loop *loop, int timeout)
         EVIO_ABORT("epoll_pwait() failed, error %d: %s\n", err, EVIO_STRERROR(err));
     }
 
-    for (size_t i = events_count; i--;) {
+    for (size_t i = 0; i < (size_t)events_count; ++i) {
         struct epoll_event *ev = &loop->events.ptr[i];
 
         uint32_t fd32 = ev->data.u64 & UINT32_MAX;

@@ -32,6 +32,16 @@ typedef EVIO_LIST(evio_base *) evio_list;
 __evio_nonnull(4) __evio_nodiscard __evio_returns_nonnull
 void *evio_list_resize(void *ptr, size_t size, size_t count, size_t *total);
 
+/** @brief Inline fast path for evio_list_resize(). */
+static inline __evio_nonnull(4) __evio_nodiscard __evio_returns_nonnull
+void *evio_list_ensure(void *ptr, size_t size, size_t count, size_t *total)
+{
+    if (__evio_likely(*total >= count)) {
+        return ptr;
+    }
+    return evio_list_resize(ptr, size, count, total);
+}
+
 /**
  * @brief Adds watcher to list.
  * @param loop The event loop.

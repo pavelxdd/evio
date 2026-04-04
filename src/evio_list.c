@@ -37,7 +37,7 @@ void evio_list_start(evio_loop *loop, evio_base *base,
         evio_ref(loop);
     }
 
-    list->ptr = evio_list_resize(list->ptr, sizeof(*list->ptr),
+    list->ptr = evio_list_ensure(list->ptr, sizeof(*list->ptr),
                                  list->count, &list->total);
     list->ptr[base->active - 1] = base;
 }

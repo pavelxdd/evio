@@ -2,25 +2,25 @@
 #include "evio_heap.h"
 
 /**
- * @brief Calculates the parent index of a node in the heap.
+ * @brief Calculates the parent index of a node in the 4-ary heap.
  * @param i The child node's index.
  * @return The parent node's index.
  */
 static inline __evio_nodiscard
 size_t evio_heap_parent(size_t i)
 {
-    return (i - 1) >> 1;
+    return (i - 1) >> 2;
 }
 
 /**
- * @brief Calculates the left child index of a node in the heap.
+ * @brief Calculates the first child index of a node in the 4-ary heap.
  * @param i The parent node's index.
- * @return The left child's index.
+ * @return The first child's index.
  */
 static inline __evio_nodiscard
 size_t evio_heap_child(size_t i)
 {
-    return (i << 1) + 1;
+    return (i << 2) + 1;
 }
 
 void evio_heap_up(evio_node *heap, size_t index)
@@ -48,13 +48,22 @@ void evio_heap_down(evio_node *heap, size_t index, size_t count)
     evio_node node = heap[index];
 
     for (;;) {
-        size_t l = evio_heap_child(index);
-        if (l >= count) {
+        size_t c = evio_heap_child(index);
+        if (c >= count) {
             break;
         }
 
-        size_t r = l + 1;
-        size_t m = (r < count && heap[r].time < heap[l].time) ? r : l;
+        size_t end = c + 4;
+        if (end > count) {
+            end = count;
+        }
+
+        size_t m = c;
+        for (size_t j = c + 1; j < end; ++j) {
+            if (heap[j].time < heap[m].time) {
+                m = j;
+            }
+        }
 
         if (node.time <= heap[m].time) {
             break;

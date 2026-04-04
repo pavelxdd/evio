@@ -1,5 +1,5 @@
 project('evio', 'c',
-    version: '0.10.1',
+    version: '0.11.0',
     license: 'MIT',
     meson_version: '>=0.56.0',
     default_options: [
