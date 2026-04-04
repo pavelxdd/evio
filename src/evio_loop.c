@@ -40,7 +40,7 @@ static int evio_timeout(evio_loop *loop)
         return 0;
     }
 
-    if (atomic_load_explicit(&loop->event_pending.value, memory_order_acquire)) {
+    if (atomic_load_explicit(&loop->event_pending.value, memory_order_relaxed)) {
         return 0;
     }
 

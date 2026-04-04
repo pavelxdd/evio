@@ -228,7 +228,7 @@ void evio_poll_wait(evio_loop *loop, int timeout)
         }
         // GCOVR_EXCL_STOP
 
-        if (evio_invalidate_fd(loop, fd) <= 0) {
+        if (__evio_unlikely(!fds->list.count)) {
             continue;
         }
 

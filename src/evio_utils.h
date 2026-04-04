@@ -64,7 +64,7 @@ evio_abort_cb evio_get_abort(void **ctx);
  * @param ... The arguments for the format string.
  */
 __evio_public __evio_nonnull(1, 3, 4)
-__evio_noreturn __evio_format_printf(4, 5)
+__evio_noreturn __evio_format_printf(4, 5) __evio_cold
 void evio_abort(const char *restrict file, int line,
                 const char *restrict func, const char *restrict format, ...);
 

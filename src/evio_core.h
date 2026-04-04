@@ -116,13 +116,75 @@ struct evio_loop {
 };
 
 /**
+ * @brief Sets the pending state of a watcher.
+ * @details Encode (index, queue) into `base->pending`.
+ * @param base The watcher's base structure.
+ * @param index The 0-based index in the pending array.
+ * @param queue The queue index (0 or 1).
+ */
+static inline __evio_nonnull(1)
+void evio_pending_set(evio_base *base, size_t index, size_t queue)
+{
+    base->pending = (index << 1) + 1 + queue;
+}
+
+/**
+ * @brief Gets the pending array index from a watcher's pending state.
+ * @param base The watcher's base structure.
+ * @return The 0-based index in the pending array.
+ */
+static inline __evio_nonnull(1) __evio_nodiscard
+size_t evio_pending_get_index(const evio_base *base)
+{
+    return (base->pending - 1) >> 1;
+}
+
+/**
+ * @brief Gets the pending queue index from a watcher's pending state.
+ * @param base The watcher's base structure.
+ * @return The queue index (0 or 1).
+ */
+static inline __evio_nonnull(1) __evio_nodiscard
+size_t evio_pending_get_queue(const evio_base *base)
+{
+    return (base->pending - 1) & 1;
+}
+
+/**
  * @brief Queues an event for a watcher.
  * @param loop The event loop.
  * @param base The watcher to queue the event for.
  * @param emask The event mask.
  */
-__evio_nonnull(1, 2)
-void evio_queue_event(evio_loop *loop, evio_base *base, evio_mask emask);
+static inline __evio_nonnull(1, 2)
+void evio_queue_event(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    if (__evio_unlikely(base->pending)) {
+        const size_t queue = evio_pending_get_queue(base);
+        const size_t index = evio_pending_get_index(base);
+
+        evio_pending_list *pending = &loop->pending[queue];
+        EVIO_ASSERT(pending->count > index);
+        EVIO_ASSERT(pending->ptr[index].base == base);
+
+        evio_pending *p = &pending->ptr[index];
+        p->emask |= emask;
+        return;
+    }
+
+    const size_t queue = loop->pending_queue;
+    evio_pending_list *pending = &loop->pending[queue];
+
+    const size_t index = pending->count++;
+    evio_pending_set(base, index, queue);
+
+    pending->ptr = evio_list_ensure(pending->ptr, sizeof(evio_pending),
+                                    pending->count, &pending->total);
+
+    evio_pending *p = &pending->ptr[index];
+    p->base = base;
+    p->emask = emask;
+}
 
 /**
  * @brief Queues the same event for multiple watchers.
@@ -131,7 +193,7 @@ void evio_queue_event(evio_loop *loop, evio_base *base, evio_mask emask);
  * @param count The number of watchers in the array.
  * @param emask The event mask.
  */
-__evio_nonnull(1, 2)
+__evio_nonnull(1, 2) __evio_hot
 void evio_queue_events(evio_loop *loop, evio_base **base, size_t count, evio_mask emask);
 
 /**
@@ -140,7 +202,7 @@ void evio_queue_events(evio_loop *loop, evio_base **base, size_t count, evio_mas
  * @param fd The file descriptor.
  * @param emask The event mask.
  */
-__evio_nonnull(1)
+__evio_nonnull(1) __evio_hot
 void evio_queue_fd_events(evio_loop *loop, int fd, evio_mask emask);
 
 /**
@@ -219,7 +281,7 @@ void evio_signal_cleanup_loop(evio_loop *loop);
  * @brief Updates file descriptor watchers in the event loop via epoll_ctl.
  * @param loop The event loop.
  */
-__evio_nonnull(1)
+__evio_nonnull(1) __evio_hot
 void evio_poll_update(evio_loop *loop);
 
 /**
@@ -227,12 +289,12 @@ void evio_poll_update(evio_loop *loop);
  * @param loop The event loop.
  * @param timeout The timeout in milliseconds.
  */
-__evio_nonnull(1)
+__evio_nonnull(1) __evio_hot
 void evio_poll_wait(evio_loop *loop, int timeout);
 
 /**
  * @brief Updates timer watchers in the event loop, firing expired timers.
  * @param loop The event loop.
  */
-__evio_nonnull(1)
+__evio_nonnull(1) __evio_hot
 void evio_timer_update(evio_loop *loop);

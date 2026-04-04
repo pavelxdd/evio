@@ -47,6 +47,7 @@ cflags_check = [
     '-Wformat=2',
     '-Wwrite-strings',
     '-Wstrict-overflow=4',
+    '-Winline',
     '-Wno-missing-field-initializers',
     '-Wno-strict-aliasing',
     '-Wno-clobbered',
@@ -198,6 +199,7 @@ if get_option('tests')
         c_args: [
             '-I' + current_build_dir,
             '-Wno-unused-result',
+            '-Wno-inline',
             '-DEVIO_TESTING=1',
             '-UNDEBUG',
             '-fno-inline',

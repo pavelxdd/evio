@@ -24,7 +24,7 @@ typedef struct {
  * @param heap The heap array.
  * @param index The index of the element to sift up.
  */
-__evio_nonnull(1)
+__evio_nonnull(1) __evio_hot
 void evio_heap_up(evio_node *heap, size_t index);
 
 /**
@@ -33,7 +33,7 @@ void evio_heap_up(evio_node *heap, size_t index);
  * @param index The index of the element to sift down.
  * @param count The total number of elements in the heap.
  */
-__evio_nonnull(1)
+__evio_nonnull(1) __evio_hot
 void evio_heap_down(evio_node *heap, size_t index, size_t count);
 
 /**
@@ -42,5 +42,5 @@ void evio_heap_down(evio_node *heap, size_t index, size_t count);
  * @param index The index of the element to adjust.
  * @param count The total number of elements in the heap.
  */
-__evio_nonnull(1)
+__evio_nonnull(1) __evio_hot
 void evio_heap_adjust(evio_node *heap, size_t index, size_t count);

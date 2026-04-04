@@ -106,7 +106,7 @@ clockid_t evio_get_clockid(const evio_loop *loop);
  * @param flags Flags to control execution (e.g., `EVIO_RUN_ONCE`).
  * @return 0 if there are no active watchers, non-zero otherwise.
  */
-__evio_public __evio_nonnull(1)
+__evio_public __evio_nonnull(1) __evio_hot
 int evio_run(evio_loop *loop, int flags);
 
 /**
@@ -167,7 +167,7 @@ void evio_feed_signal(evio_loop *loop, int signum);
  * @warning Re-entrant: calling from callbacks can recurse and exhaust the stack.
  * @param loop The event loop.
  */
-__evio_public __evio_nonnull(1)
+__evio_public __evio_nonnull(1) __evio_hot
 void evio_invoke_pending(evio_loop *loop);
 
 /**

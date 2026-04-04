@@ -90,6 +90,22 @@
 #   endif
 #endif
 
+#ifndef __evio_hot
+#   if __evio_has_attribute(__hot__)
+#       define __evio_hot __attribute__((__hot__))
+#   else
+#       define __evio_hot
+#   endif
+#endif
+
+#ifndef __evio_cold
+#   if __evio_has_attribute(__cold__)
+#       define __evio_cold __attribute__((__cold__))
+#   else
+#       define __evio_cold
+#   endif
+#endif
+
 #ifndef __evio_has_builtin
 #   ifdef __has_builtin
 #       define __evio_has_builtin(x) __has_builtin(x)
