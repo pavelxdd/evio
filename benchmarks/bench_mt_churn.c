@@ -546,19 +546,6 @@ int main(void)
 
     const unsigned int max_threads = 2 * (ncpu < 8 ? ncpu : 8);
 
-    struct rlimit lim;
-    if (getrlimit(RLIMIT_NOFILE, &lim) == 0 && lim.rlim_cur != RLIM_INFINITY) {
-        unsigned long long cur = lim.rlim_cur;
-        unsigned long long margin = 128;
-        unsigned long long max_watchers = (cur > margin) ? ((cur - margin) / max_threads / 2) : 1;
-        if (!max_watchers) {
-            max_watchers = 1;
-        }
-        if (watchers > max_watchers) {
-            watchers = (unsigned int)max_watchers;
-        }
-    }
-
     const unsigned int thread_counts[] = { 1, 2, 4, 8, 16 };
 
     for (size_t i = 0; i < sizeof(thread_counts) / sizeof(thread_counts[0]); ++i) {
@@ -567,11 +554,23 @@ int main(void)
             continue;
         }
 
-        bench_evio_churn_mt(t, watchers, iterations, false);
-        bench_evio_churn_mt(t, watchers, iterations, true);
-        bench_libev_churn_mt(t, watchers, iterations);
-        bench_libevent_churn_mt(t, watchers, iterations);
-        bench_libuv_churn_mt(t, watchers, iterations);
+        unsigned int w = watchers;
+
+        struct rlimit lim;
+        if (getrlimit(RLIMIT_NOFILE, &lim) == 0 && lim.rlim_cur != RLIM_INFINITY) {
+            unsigned long long cur = lim.rlim_cur;
+            unsigned long long margin = 128;
+            unsigned long long max_w = (cur > margin) ? ((cur - margin) / t / 2) : 1;
+            if (w > max_w) {
+                w = max_w ? (unsigned int)max_w : 1;
+            }
+        }
+
+        bench_evio_churn_mt(t, w, iterations, false);
+        bench_evio_churn_mt(t, w, iterations, true);
+        bench_libev_churn_mt(t, w, iterations);
+        bench_libevent_churn_mt(t, w, iterations);
+        bench_libuv_churn_mt(t, w, iterations);
         printf("\n");
     }
 
