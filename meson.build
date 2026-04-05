@@ -80,7 +80,7 @@ if get_option('analyzer')
     endif
 endif
 
-if get_option('b_sanitize') != 'none'
+if get_option('b_sanitize') != 'none' or get_option('buildtype') == 'minsize'
     cflags_check += '-Wno-inline'
 endif
 
