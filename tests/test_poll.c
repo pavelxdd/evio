@@ -1421,6 +1421,56 @@ TEST(test_evio_poll_stop_on_closed_fd)
     evio_loop_free(loop);
 }
 
+// Lazy DEL preserves emask; EVIO_POLL on new watcher forces re-registration after fd reuse.
+TEST(test_evio_poll_lazy_del_fd_reuse)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+    int fd = fds[0];
+
+    evio_poll io1;
+    evio_poll_init(&io1, generic_cb, fd, EVIO_READ);
+    io1.data = &data;
+    evio_poll_start(loop, &io1);
+    evio_poll_update(loop);
+    assert_int_equal(loop->fds.ptr[fd].emask, EVIO_READ);
+    uint32_t gen_after_add = loop->fds.ptr[fd].gen;
+
+    // Stop → lazy DEL preserves emask.
+    evio_poll_stop(loop, &io1);
+    evio_poll_update(loop);
+    assert_int_equal(loop->fds.ptr[fd].emask, EVIO_READ);
+    assert_int_equal(loop->fds.ptr[fd].gen, gen_after_add);
+
+    // Simulate close(fd) removing fd from kernel epoll.
+    struct epoll_event ev = { 0 };
+    assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_DEL, fd, &ev), 0);
+
+    // New watcher on same fd, same mask. EVIO_POLL forces epoll_ctl
+    // despite emask match. MOD → ENOENT → ADD recovery.
+    evio_poll io2;
+    evio_poll_init(&io2, generic_cb, fd, EVIO_READ);
+    io2.data = &data;
+    evio_poll_start(loop, &io2);
+    evio_poll_update(loop);
+    assert_true(loop->fds.ptr[fd].gen > gen_after_add);
+
+    assert_int_equal(write(fds[1], "x", 1), 1);
+    evio_poll_wait(loop, 0);
+    evio_invoke_pending(loop);
+    assert_int_equal(data.called, 1);
+    assert_true(data.emask & EVIO_READ);
+
+    evio_poll_stop(loop, &io2);
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_poll_stop_middle_updates_active)
 {
     generic_cb_data data[3] = { {0}, {0}, {0} };
