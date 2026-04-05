@@ -71,25 +71,17 @@ static void *evio_churn_thread(void *ptr)
     unsigned int watchers = arg->watchers;
     unsigned int iterations = arg->iterations;
 
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
-#endif
-
+    int (*pipes)[2] = malloc(sizeof(*pipes) * watchers);
     int *fds = malloc(sizeof(*fds) * watchers);
-    if (!fds) {
+    if (!pipes || !fds) {
         abort();
     }
     for (unsigned int i = 0; i < watchers; ++i) {
-        fds[i] = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
-        if (fds[i] < 0) {
+        if (pipe(pipes[i]) < 0) {
             abort();
         }
+        fds[i] = pipes[i][0];
     }
-
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 
     evio_loop *loop = evio_loop_new(arg->use_uring ? EVIO_FLAG_URING : EVIO_FLAG_NONE);
     if (!loop) {
@@ -101,7 +93,7 @@ static void *evio_churn_thread(void *ptr)
     }
 
     for (unsigned int i = 0; i < watchers; ++i) {
-        evio_poll_init(&io[i], dummy_evio_cb, fds[i], EVIO_READ | EVIO_WRITE);
+        evio_poll_init(&io[i], dummy_evio_cb, fds[i], EVIO_READ);
     }
 
     pthread_barrier_wait(arg->ready);
@@ -122,11 +114,13 @@ static void *evio_churn_thread(void *ptr)
     evio_loop_free(loop);
 
     for (unsigned int i = 0; i < watchers; ++i) {
-        close(fds[i]);
+        close(pipes[i][0]);
+        close(pipes[i][1]);
     }
 
     free(io);
     free(fds);
+    free(pipes);
     return NULL;
 }
 
@@ -194,25 +188,17 @@ static void *libev_churn_thread(void *ptr)
     unsigned int watchers = arg->watchers;
     unsigned int iterations = arg->iterations;
 
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
-#endif
-
+    int (*pipes)[2] = malloc(sizeof(*pipes) * watchers);
     int *fds = malloc(sizeof(*fds) * watchers);
-    if (!fds) {
+    if (!pipes || !fds) {
         abort();
     }
     for (unsigned int i = 0; i < watchers; ++i) {
-        fds[i] = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
-        if (fds[i] < 0) {
+        if (pipe(pipes[i]) < 0) {
             abort();
         }
+        fds[i] = pipes[i][0];
     }
-
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 
     struct ev_loop *loop = ev_loop_new(0);
     if (!loop) {
@@ -224,7 +210,7 @@ static void *libev_churn_thread(void *ptr)
     }
 
     for (unsigned int i = 0; i < watchers; ++i) {
-        ev_io_init(&io[i], dummy_libev_cb, fds[i], LIBEV_READ | LIBEV_WRITE);
+        ev_io_init(&io[i], dummy_libev_cb, fds[i], LIBEV_READ);
     }
 
     pthread_barrier_wait(arg->ready);
@@ -245,11 +231,13 @@ static void *libev_churn_thread(void *ptr)
     ev_loop_destroy(loop);
 
     for (unsigned int i = 0; i < watchers; ++i) {
-        close(fds[i]);
+        close(pipes[i][0]);
+        close(pipes[i][1]);
     }
 
     free(io);
     free(fds);
+    free(pipes);
     return NULL;
 }
 
@@ -266,20 +254,16 @@ static void *libevent_churn_thread(void *ptr)
     unsigned int watchers = arg->watchers;
     unsigned int iterations = arg->iterations;
 
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
-#endif
-
+    int (*pipes)[2] = malloc(sizeof(*pipes) * watchers);
     int *fds = malloc(sizeof(*fds) * watchers);
-    if (!fds) {
+    if (!pipes || !fds) {
         abort();
     }
     for (unsigned int i = 0; i < watchers; ++i) {
-        fds[i] = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
-        if (fds[i] < 0) {
+        if (pipe(pipes[i]) < 0) {
             abort();
         }
+        fds[i] = pipes[i][0];
     }
 
     struct event_base *base = event_base_new();
@@ -292,7 +276,7 @@ static void *libevent_churn_thread(void *ptr)
         abort();
     }
     for (unsigned int i = 0; i < watchers; ++i) {
-        ev[i] = event_new(base, fds[i], LIBEVENT_READ | LIBEVENT_WRITE, dummy_libevent_cb, NULL);
+        ev[i] = event_new(base, fds[i], LIBEVENT_READ, dummy_libevent_cb, NULL);
         if (!ev[i]) {
             abort();
         }
@@ -321,13 +305,12 @@ static void *libevent_churn_thread(void *ptr)
     event_base_free(base);
 
     for (unsigned int i = 0; i < watchers; ++i) {
-        close(fds[i]);
+        close(pipes[i][0]);
+        close(pipes[i][1]);
     }
     free(fds);
+    free(pipes);
 
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
     return NULL;
 }
 
@@ -439,25 +422,17 @@ static void *libuv_churn_thread(void *ptr)
     unsigned int watchers = arg->watchers;
     unsigned int iterations = arg->iterations;
 
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
-#endif
-
+    int (*pipes)[2] = malloc(sizeof(*pipes) * watchers);
     int *fds = malloc(sizeof(*fds) * watchers);
-    if (!fds) {
+    if (!pipes || !fds) {
         abort();
     }
     for (unsigned int i = 0; i < watchers; ++i) {
-        fds[i] = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
-        if (fds[i] < 0) {
+        if (pipe(pipes[i]) < 0) {
             abort();
         }
+        fds[i] = pipes[i][0];
     }
-
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 
     uv_loop_t *loop = uv_loop_new();
     if (!loop) {
@@ -477,7 +452,7 @@ static void *libuv_churn_thread(void *ptr)
 
     for (unsigned int i = 0; i < iterations; ++i) {
         for (unsigned int j = 0; j < watchers; ++j) {
-            uv_poll_start(&io[j], UV_READABLE | UV_WRITABLE, dummy_libuv_cb);
+            uv_poll_start(&io[j], UV_READABLE, dummy_libuv_cb);
         }
         uv_run(loop, UV_RUN_NOWAIT);
 
@@ -498,11 +473,13 @@ static void *libuv_churn_thread(void *ptr)
     free(loop);
 
     for (unsigned int i = 0; i < watchers; ++i) {
-        close(fds[i]);
+        close(pipes[i][0]);
+        close(pipes[i][1]);
     }
 
     free(io);
     free(fds);
+    free(pipes);
     return NULL;
 }
 
@@ -573,7 +550,7 @@ int main(void)
     if (getrlimit(RLIMIT_NOFILE, &lim) == 0 && lim.rlim_cur != RLIM_INFINITY) {
         unsigned long long cur = lim.rlim_cur;
         unsigned long long margin = 128;
-        unsigned long long max_watchers = (cur > margin) ? ((cur - margin) / max_threads) : 1;
+        unsigned long long max_watchers = (cur > margin) ? ((cur - margin) / max_threads / 2) : 1;
         if (!max_watchers) {
             max_watchers = 1;
         }

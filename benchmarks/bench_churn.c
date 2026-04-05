@@ -36,7 +36,7 @@ static void bench_evio_churn(int fds[NUM_WATCHERS], bool use_uring)
     evio_poll io[NUM_WATCHERS];
 
     for (size_t i = 0; i < NUM_WATCHERS; ++i) {
-        evio_poll_init(&io[i], dummy_evio_cb, fds[i], EVIO_READ | EVIO_WRITE);
+        evio_poll_init(&io[i], dummy_evio_cb, fds[i], EVIO_READ);
     }
 
     uint64_t start = get_time_ns();
@@ -66,7 +66,7 @@ static void bench_libev_churn(int fds[NUM_WATCHERS])
     ev_io io[NUM_WATCHERS];
 
     for (size_t i = 0; i < NUM_WATCHERS; ++i) {
-        ev_io_init(&io[i], dummy_libev_cb, fds[i], LIBEV_READ | LIBEV_WRITE);
+        ev_io_init(&io[i], dummy_libev_cb, fds[i], LIBEV_READ);
     }
 
     uint64_t start = get_time_ns();
@@ -95,7 +95,7 @@ static void bench_libevent_churn(int fds[NUM_WATCHERS])
     struct event *ev[NUM_WATCHERS];
 
     for (size_t i = 0; i < NUM_WATCHERS; ++i) {
-        ev[i] = event_new(base, fds[i], LIBEVENT_READ | LIBEVENT_WRITE, dummy_libevent_cb, NULL);
+        ev[i] = event_new(base, fds[i], LIBEVENT_READ, dummy_libevent_cb, NULL);
     }
 
     uint64_t start = get_time_ns();
@@ -133,7 +133,7 @@ static void bench_libuv_churn(int fds[NUM_WATCHERS])
     uint64_t start = get_time_ns();
     for (size_t i = 0; i < NUM_ITERATIONS; ++i) {
         for (size_t j = 0; j < NUM_WATCHERS; ++j) {
-            uv_poll_start(&io[j], UV_READABLE | UV_WRITABLE, dummy_libuv_cb);
+            uv_poll_start(&io[j], UV_READABLE, dummy_libuv_cb);
         }
         uv_run(loop, UV_RUN_NOWAIT);
 
@@ -161,19 +161,14 @@ int main(void)
 {
     print_versions();
 
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
-#endif
-
+    int pipes[NUM_WATCHERS][2];
     int fds[NUM_WATCHERS];
     for (size_t i = 0; i < NUM_WATCHERS; ++i) {
-        fds[i] = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
+        if (pipe(pipes[i]) < 0) {
+            abort();
+        }
+        fds[i] = pipes[i][0];
     }
-
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 
     bench_evio_churn(fds, false);
     bench_evio_churn(fds, true);
@@ -183,7 +178,8 @@ int main(void)
     bench_libuv_churn(fds);
 
     for (size_t i = 0; i < NUM_WATCHERS; ++i) {
-        close(fds[i]);
+        close(pipes[i][0]);
+        close(pipes[i][1]);
     }
 
     return EXIT_SUCCESS;

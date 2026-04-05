@@ -314,7 +314,6 @@ if get_option('benchmarks')
         'async',
         'idle',
         'churn',
-        'churn_connected',
         'workers',
         'mt_churn',
     ]
