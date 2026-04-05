@@ -277,7 +277,6 @@ TEST(test_evio_invalidate_with_pending_change)
 
     evio_poll_stop(loop, &io);
 
-    // Change stays pending until poll_update processes it.
     assert_int_equal(loop->fdchanges.count, 1);
     assert_int_equal(evio_refcount(loop), 0);
 
@@ -311,7 +310,6 @@ TEST(test_evio_invalidate_with_pending_error)
 
     evio_poll_stop(loop, &io);
 
-    // Error stays pending until poll_update flushes it.
     assert_int_equal(loop->fderrors.count, 1);
     assert_int_equal(evio_refcount(loop), 0);
 
@@ -345,11 +343,9 @@ TEST(test_evio_flush_fd_change_multiple)
     assert_int_equal(loop->fds.ptr[fds[1][0]].changes, 2);
     assert_int_equal(loop->fds.ptr[fds[2][0]].changes, 3);
 
-    // Stop merges into the existing queued change.
     evio_poll_stop(loop, &io[0]);
     assert_int_equal(loop->fdchanges.count, 3);
 
-    // poll_update processes all three.
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(loop->fdchanges.count, 0);
 
@@ -390,11 +386,9 @@ TEST(test_evio_flush_fd_error_multiple)
     assert_int_equal(loop->fds.ptr[fds[1][0]].errors, 2);
     assert_int_equal(loop->fds.ptr[fds[2][0]].errors, 3);
 
-    // Errors stay pending until poll_update.
     evio_poll_stop(loop, &io[0]);
     assert_int_equal(loop->fderrors.count, 3);
 
-    // poll_update flushes error for the stopped fd.
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(loop->fderrors.count, 2);
 
@@ -419,8 +413,7 @@ TEST(test_evio_invalidate_fd_eperm)
 
     prepare_fd_for_loop(loop, fd);
 
-    // Set emask so epoll_ctl(DEL) is attempted.
-    // DEL on /dev/null gives EPERM, treated as success.
+    // DEL on /dev/null → EPERM, treated as success.
     loop->fds.ptr[fd].emask = EVIO_READ;
     assert_int_equal(evio_invalidate_fd(loop, fd), 0);
 
@@ -443,29 +436,26 @@ TEST(test_evio_invalidate_fd_with_pending)
     prepare_fd_for_loop(loop, fds[1][0]);
     prepare_fd_for_loop(loop, fds[2][0]);
 
-    // Queue changes for 3 fds.
     evio_queue_fd_change(loop, fds[0][0], 0);
     evio_queue_fd_change(loop, fds[1][0], 0);
     evio_queue_fd_change(loop, fds[2][0], 0);
     assert_int_equal(loop->fdchanges.count, 3);
 
-    // Invalidate fds[0] flushes its change (swap-and-shrink).
+    // Flush via swap-and-shrink.
     assert_int_equal(evio_invalidate_fd(loop, fds[0][0]), 0);
     assert_int_equal(loop->fdchanges.count, 2);
 
-    // Queue errors for 2 remaining fds.
     evio_queue_fd_error(loop, fds[1][0]);
     evio_queue_fd_error(loop, fds[2][0]);
     assert_int_equal(loop->fderrors.count, 2);
 
-    // Invalidate fds[1] flushes its error (swap-and-shrink).
     assert_int_equal(evio_invalidate_fd(loop, fds[1][0]), 0);
     assert_int_equal(loop->fderrors.count, 1);
 
-    // Second invalidation hits EVIO_FD_INVAL.
+    // EVIO_FD_INVAL on second invalidation.
     assert_int_equal(evio_invalidate_fd(loop, fds[0][0]), 1);
 
-    // Single-element flush paths.
+    // Single-element flush.
     loop->fdchanges.count = 1;
     loop->fds.ptr[fds[2][0]].changes = 1;
     assert_int_equal(evio_invalidate_fd(loop, fds[2][0]), 0);

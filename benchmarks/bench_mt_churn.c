@@ -567,7 +567,7 @@ int main(void)
         ncpu = 1;
     }
 
-    const unsigned int max_threads = ncpu < 8 ? ncpu : 8;
+    const unsigned int max_threads = 2 * (ncpu < 8 ? ncpu : 8);
 
     struct rlimit lim;
     if (getrlimit(RLIMIT_NOFILE, &lim) == 0 && lim.rlim_cur != RLIM_INFINITY) {
@@ -582,7 +582,7 @@ int main(void)
         }
     }
 
-    const unsigned int thread_counts[] = { 1, 2, 4, 8 };
+    const unsigned int thread_counts[] = { 1, 2, 4, 8, 16 };
 
     for (size_t i = 0; i < sizeof(thread_counts) / sizeof(thread_counts[0]); ++i) {
         unsigned int t = thread_counts[i];

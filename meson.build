@@ -80,6 +80,10 @@ if get_option('analyzer')
     endif
 endif
 
+if get_option('b_sanitize') != 'none'
+    cflags_check += '-Wno-inline'
+endif
+
 add_project_arguments(
     cflags,
     cc.get_supported_arguments(cflags_check),
@@ -310,6 +314,7 @@ if get_option('benchmarks')
         'async',
         'idle',
         'churn',
+        'churn_connected',
         'workers',
         'mt_churn',
     ]

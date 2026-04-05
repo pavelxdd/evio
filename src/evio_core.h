@@ -212,8 +212,23 @@ void evio_queue_fd_events(evio_loop *loop, int fd, evio_mask emask);
  * @param fd The file descriptor.
  * @param flags The change flags.
  */
-__evio_nonnull(1)
-void evio_queue_fd_change(evio_loop *loop, int fd, evio_flag flags);
+static inline __evio_nonnull(1)
+void evio_queue_fd_change(evio_loop *loop, int fd, evio_flag flags)
+{
+    EVIO_ASSERT(fd >= 0 && (size_t)fd < loop->fds.count);
+
+    evio_fds *fds = &loop->fds.ptr[fd];
+
+    if (__evio_likely(!fds->changes)) {
+        fds->changes = ++loop->fdchanges.count;
+        loop->fdchanges.ptr = evio_list_ensure(loop->fdchanges.ptr, sizeof(*loop->fdchanges.ptr),
+                                               loop->fdchanges.count, &loop->fdchanges.total);
+        loop->fdchanges.ptr[fds->changes - 1] = fd;
+    }
+
+    fds->flags &= ~EVIO_FD_INVAL;
+    fds->flags |= flags;
+}
 
 /**
  * @brief Queues an error notification for a file descriptor.

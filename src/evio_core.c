@@ -61,23 +61,6 @@ void evio_queue_fd_error(evio_loop *loop, int fd)
     }
 }
 
-void evio_queue_fd_change(evio_loop *loop, int fd, evio_flag flags)
-{
-    EVIO_ASSERT(fd >= 0 && (size_t)fd < loop->fds.count);
-
-    evio_fds *fds = &loop->fds.ptr[fd];
-
-    if (__evio_likely(!fds->changes)) {
-        fds->changes = ++loop->fdchanges.count;
-        loop->fdchanges.ptr = evio_list_ensure(loop->fdchanges.ptr, sizeof(*loop->fdchanges.ptr),
-                                               loop->fdchanges.count, &loop->fdchanges.total);
-        loop->fdchanges.ptr[fds->changes - 1] = fd;
-    }
-
-    fds->flags &= ~EVIO_FD_INVAL;
-    fds->flags |= flags;
-}
-
 void evio_flush_fd_change(evio_loop *loop, int idx)
 {
     EVIO_ASSERT(idx >= 0 && (size_t)idx < loop->fdchanges.count);
