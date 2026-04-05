@@ -897,6 +897,61 @@ TEST(test_evio_uring_no_retry_on_ebadf_injected)
     evio_loop_free(loop);
 }
 
+// io_uring: lazy DEL → fd removed from kernel epoll → EVIO_POLL forces MOD → ENOENT → ADD.
+TEST(test_evio_poll_uring_lazy_del_fd_reuse)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    assert_non_null(loop);
+
+    // GCOVR_EXCL_START
+    if (!loop->iou) {
+        evio_loop_free(loop);
+        TEST_SKIPF("io_uring unsupported by kernel");
+    }
+    // GCOVR_EXCL_STOP
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+    int fd = fds[0];
+
+    evio_poll io1;
+    evio_poll_init(&io1, generic_cb, fd, EVIO_READ);
+    io1.data = &data;
+    evio_poll_start(loop, &io1);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    uint32_t gen_after_add = loop->fds.ptr[fd].gen;
+
+    // Stop → lazy DEL preserves emask.
+    evio_poll_stop(loop, &io1);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(loop->fds.ptr[fd].emask, EVIO_READ);
+    assert_int_equal(loop->fds.ptr[fd].gen, gen_after_add);
+
+    // Simulate close(fd) removing fd from kernel epoll.
+    struct epoll_event ev = { 0 };
+    assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_DEL, fd, &ev), 0);
+
+    // New watcher on same fd, same mask via io_uring.
+    // EVIO_POLL forces uring MOD → ENOENT → uring ADD.
+    evio_poll io2;
+    evio_poll_init(&io2, generic_cb, fd, EVIO_READ);
+    io2.data = &data;
+    evio_poll_start(loop, &io2);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_true(loop->fds.ptr[fd].gen > gen_after_add);
+
+    assert_int_equal(write(fds[1], "x", 1), 1);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data.called, 1);
+    assert_true(data.emask & EVIO_READ);
+
+    evio_poll_stop(loop, &io2);
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_uring_probe_epoll_ctl)
 {
     // EVIO_FLAG_URING probe smoke-test.
