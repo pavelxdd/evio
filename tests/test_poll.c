@@ -678,24 +678,30 @@ TEST(test_evio_poll_eexist_same_mask)
     assert_int_equal(loop->fds.ptr[fds[0]].emask, EVIO_READ);
 
     evio_poll_stop(loop, &io);
+
+    // Trigger reactive DEL: make fd readable so poll_wait sees
+    // a stale event and removes the fd from epoll.
+    assert_int_equal(write(fds[1], "x", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(loop->fds.ptr[fds[0]].emask, 0);
+
+    // Drain the byte written above.
+    char buf[1];
+    assert_int_equal(read(fds[0], buf, 1), 1);
 
     // Manually add fd back to epoll to create desync.
     struct epoll_event ev = { .events = EPOLLIN, .data.u64 = 0 };
     assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_ADD, fds[0], &ev), 0);
 
-    // Start watcher again. This queues a change.
+    // Re-init (sets EVIO_POLL) and start watcher again.
+    evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
     evio_poll_start(loop, &io);
 
-    // Run. poll_update will:
-    // - See old emask was 0, so op=ADD.
-    // - epoll_ctl(ADD) fails with EEXIST.
-    // - recovery calls epoll_ctl(MOD).
+    // poll_update: emask=0, op=ADD, EEXIST, recovery MOD.
     evio_run(loop, EVIO_RUN_NOWAIT);
 
-    // Watcher is working.
-    assert_int_equal(write(fds[1], "x", 1), 1);
+    assert_int_equal(write(fds[1], "y", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(data.called, 1);
 
@@ -789,9 +795,7 @@ TEST(test_evio_poll_stale_event_no_watchers_invalidate)
 
     evio_poll_stop(loop, &io);
 
-    // Run the loop. It will process the DEL change.
-    // It will also get the stale event from epoll_wait.
-    // The handler will call evio_invalidate_fd, which returns 0
+    // Run the loop. The stale event from epoll_wait is dropped
     // because there are no more watchers.
     evio_run(loop, EVIO_RUN_NOWAIT);
 
@@ -849,8 +853,7 @@ TEST(test_evio_poll_stop_shared_fd)
     evio_poll_start(loop, &io2);
     assert_int_equal(evio_refcount(loop), 2);
 
-    // Stop one of them. evio_invalidate_fd returns > 0 because p2 is still active.
-    // This triggers a new change notification.
+    // Stop one of them. Queues a change to update the fd's event mask.
     evio_poll_stop(loop, &io1);
     assert_int_equal(evio_refcount(loop), 1);
     assert_int_equal(loop->fdchanges.count, 1);
@@ -1250,29 +1253,33 @@ TEST(test_evio_poll_spurious_event_del)
 
 TEST(test_evio_poll_eexist_mod_fail)
 {
-    generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
     int fds[2] = { -1, -1 };
     assert_int_equal(pipe(fds), 0);
 
-    // Start and run a watcher to set the initial fds state (emask=READ, cache=READ).
     evio_poll io1;
-    evio_poll_init(&io1, generic_cb, fds[0], EVIO_READ);
-    io1.data = &data;
+    evio_poll_init(&io1, dummy_cb, fds[0], EVIO_READ);
     evio_poll_start(loop, &io1);
     evio_run(loop, EVIO_RUN_NOWAIT);
 
-    // Stop and run to clear the epoll registration from evio's perspective.
     evio_poll_stop(loop, &io1);
+
+    // Trigger reactive DEL so emask=0.
+    assert_int_equal(write(fds[1], "x", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(loop->fds.ptr[fds[0]].emask, 0);
+
+    // Drain the pipe.
+    char buf[1];
+    assert_int_equal(read(fds[0], buf, 1), 1);
 
     // Manually add the FD back to epoll to create a desync.
     struct epoll_event ev = { .events = EPOLLIN, .data.u64 = 0 };
     assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_ADD, fds[0], &ev), 0);
 
-    // Start a new watcher with a different mask (WRITE). This queues a change.
+    // Start a new watcher with WRITE mask.
     evio_poll io2;
     evio_poll_init(&io2, error_cb, fds[0], EVIO_WRITE);
     evio_poll_start(loop, &io2);
@@ -1283,11 +1290,8 @@ TEST(test_evio_poll_eexist_mod_fail)
     // Close the fd before running the loop.
     close(fds[0]);
 
-    // Run. poll_update will:
-    // - op=ADD (old emask was 0), epoll_ctl(ADD) fails with EEXIST.
-    // - case EEXIST: cache(READ) != new_cache(WRITE).
-    // - epoll_ctl(MOD) on closed fd fails with EBADF.
-    // - break is hit -> evio_queue_fd_errors is called.
+    // poll_update: op=ADD (emask=0), EEXIST, recovery MOD on closed fd
+    // fails with EBADF → evio_queue_fd_errors.
     evio_run(loop, EVIO_RUN_NOWAIT);
     evio_invoke_pending(loop);
 
@@ -1358,7 +1362,8 @@ TEST(test_evio_poll_stale_event_after_stop)
     assert_int_equal(write(fds[1], "x", 1), 1);
 
     // Stop the watcher.
-    // This calls evio_invalidate_fd, which removes the fd from epoll.
+    // Stop queues a change; the reactive DEL in poll_wait will
+    // clean up the stale registration.
     evio_poll_stop(loop, &io);
 
     evio_run(loop, EVIO_RUN_NOWAIT);
@@ -1397,11 +1402,8 @@ TEST(test_evio_poll_stale_event_clean_del)
     io.active = 0;
 
     // Run the loop. epoll_wait will return the stale event.
-    // evio_poll_wait will call evio_invalidate_fd.
-    // Inside evio_invalidate_fd, list.count is 0, and epoll_ctl(DEL) will
-    // succeed, causing it to return 0.
-    // The check `if (evio_invalidate_fd(...) <= 0)` will be true,
-    // and the event will be correctly ignored.
+    // list.count is 0, so the reactive DEL path fires: epoll_ctl(DEL)
+    // removes the fd and the event is correctly ignored.
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     // No callback was called.
@@ -1412,7 +1414,7 @@ TEST(test_evio_poll_stale_event_clean_del)
     evio_loop_free(loop);
 }
 
-TEST(test_evio_poll_stop_on_closed_fd_asserts)
+TEST(test_evio_poll_stop_on_closed_fd)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
@@ -1424,14 +1426,16 @@ TEST(test_evio_poll_stop_on_closed_fd_asserts)
     evio_poll_init(&io, dummy_cb, fds[0], EVIO_READ);
     evio_poll_start(loop, &io);
 
-    // Run once to get the fd registered with epoll.
     evio_run(loop, EVIO_RUN_NOWAIT);
 
-    // Close the fd before stopping the watcher.
     close(fds[0]);
 
-    // DEL on closed fd => EBADF, evio_invalidate_fd returns -1.
-    expect_assert_failure(evio_poll_stop(loop, &io));
+    // Stop just queues a change, no immediate epoll_ctl.
+    evio_poll_stop(loop, &io);
+    assert_false(io.active);
+    assert_int_equal(evio_refcount(loop), 0);
+
+    evio_run(loop, EVIO_RUN_NOWAIT);
 
     close(fds[1]);
     evio_loop_free(loop);

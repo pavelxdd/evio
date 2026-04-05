@@ -142,8 +142,14 @@ int evio_invalidate_fd(evio_loop *loop, int fd)
         fds->errors = 0;
     }
 
+    evio_mask old_emask = fds->emask;
+
     fds->emask = 0;
     fds->flags = EVIO_FD_INVAL;
+
+    if (!old_emask) {
+        return 0;
+    }
 
     if (__evio_likely(!epoll_ctl(loop->fd, EPOLL_CTL_DEL, fd, NULL))) {
         return 0;

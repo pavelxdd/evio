@@ -87,20 +87,15 @@ struct evio_loop {
 
     evio_pending_list pending[2];   /**< Double-buffered queue for pending watcher callbacks. */
 
-    EVIO_LIST(evio_node) timer;     /**< Min-heap of active timers. */
-    evio_list idle;             /**< List of active idle watchers. */
-    evio_list prepare;          /**< List of active prepare watchers. */
-    evio_list check;            /**< List of active check watchers. */
-
-    EVIO_ATOMIC(int) eventfd_allow; /**< Flag to allow writing to the eventfd (thread-sync). */
-    EVIO_ATOMIC(int) event_pending; /**< Flag indicating a pending eventfd notification. */
-    EVIO_ATOMIC(int) async_pending; /**< Flag indicating at least one async watcher is pending. */
-    EVIO_ATOMIC(int) signal_pending;/**< Flag indicating at least one signal is pending. */
-
     EVIO_LIST(struct epoll_event) events; /**< Buffer for epoll_wait results. */
     EVIO_LIST(evio_fds) fds;        /**< Sparse array of per-file-descriptor data. */
     EVIO_LIST(int) fdchanges;       /**< List of fds with pending epoll changes. */
     EVIO_LIST(int) fderrors;        /**< List of fds that have encountered errors. */
+
+    EVIO_LIST(evio_node) timer;     /**< Min-heap of active timers. */
+    evio_list idle;             /**< List of active idle watchers. */
+    evio_list prepare;          /**< List of active prepare watchers. */
+    evio_list check;            /**< List of active check watchers. */
 
     evio_uring *iou;            /**< Optional io_uring context for batched epoll_ctl. */
     size_t iou_count;           /**< Number of pending io_uring operations. */
@@ -110,6 +105,12 @@ struct evio_loop {
     evio_list async;            /**< List of active async watchers. */
     evio_list cleanup;          /**< List of active cleanup watchers. */
     evio_list once;             /**< List of active once watchers. */
+
+    alignas(EVIO_CACHELINE)
+    EVIO_ATOMIC(int) eventfd_allow; /**< Flag to allow writing to the eventfd (thread-sync). */
+    EVIO_ATOMIC(int) event_pending; /**< Flag indicating a pending eventfd notification. */
+    EVIO_ATOMIC(int) async_pending; /**< Flag indicating at least one async watcher is pending. */
+    EVIO_ATOMIC(int) signal_pending;/**< Flag indicating at least one signal is pending. */
 
     sigset_t sigmask;           /**< Signal mask used in epoll_pwait to block signals. */
     uint64_t sig_active[EVIO_SIGSET_WORDS]; /**< Active signal set for this loop. */

@@ -12,7 +12,7 @@ void evio_poll_start(evio_loop *loop, evio_poll *w)
         return;
     }
 
-    loop->fds.ptr = evio_list_resize(loop->fds.ptr, sizeof(*loop->fds.ptr),
+    loop->fds.ptr = evio_list_ensure(loop->fds.ptr, sizeof(*loop->fds.ptr),
                                      (size_t)w->fd + 1, &loop->fds.total);
 
     if ((size_t)w->fd >= loop->fds.count) {
@@ -53,11 +53,7 @@ void evio_poll_stop(evio_loop *loop, evio_poll *w)
     evio_unref(loop);
     w->active = 0;
 
-    int ret = evio_invalidate_fd(loop, w->fd);
-    EVIO_ASSERT(ret >= 0);
-    if (ret > 0) {
-        evio_queue_fd_change(loop, w->fd, 0);
-    }
+    evio_queue_fd_change(loop, w->fd, 0);
 }
 
 void evio_poll_change(evio_loop *loop, evio_poll *w, int fd, evio_mask emask)
@@ -121,6 +117,11 @@ void evio_poll_update(evio_loop *loop)
         fds->emask &= EVIO_POLLET | EVIO_READ | EVIO_WRITE;
 
         if (!fds->emask) {
+            fds->emask = emask;
+            if (fds->errors) {
+                evio_flush_fd_error(loop, fds->errors - 1);
+                fds->errors = 0;
+            }
             continue;
         }
 
@@ -177,7 +178,7 @@ void evio_poll_update(evio_loop *loop)
 
     loop->fdchanges.count = 0;
 
-    if (loop->iou) {
+    if (loop->iou_count) {
         evio_uring_flush(loop);
     }
 }
@@ -229,6 +230,7 @@ void evio_poll_wait(evio_loop *loop, int timeout)
         // GCOVR_EXCL_STOP
 
         if (__evio_unlikely(!fds->list.count)) {
+            evio_invalidate_fd(loop, fd);
             continue;
         }
 
@@ -260,7 +262,7 @@ void evio_poll_wait(evio_loop *loop, int timeout)
         }
     }
 
-    if (loop->iou) {
+    if (loop->iou_count) {
         evio_uring_flush(loop);
     }
 
