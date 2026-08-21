@@ -106,7 +106,6 @@ struct evio_loop {
     evio_list cleanup;          /**< List of active cleanup watchers. */
     evio_list once;             /**< List of active once watchers. */
 
-    alignas(EVIO_CACHELINE)
     EVIO_ATOMIC(int) eventfd_allow; /**< Flag to allow writing to the eventfd (thread-sync). */
     EVIO_ATOMIC(int) event_pending; /**< Flag indicating a pending eventfd notification. */
     EVIO_ATOMIC(int) async_pending; /**< Flag indicating at least one async watcher is pending. */
