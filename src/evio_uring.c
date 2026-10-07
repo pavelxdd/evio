@@ -11,7 +11,6 @@
 
 struct evio_uring {
     struct epoll_event events[EVIO_URING_EVENTS]; /**< Local cache for epoll_event structs. */
-    uint32_t *sqhead;       /**< Pointer to the submission queue head. */
     uint32_t *cqhead;       /**< Pointer to the completion queue head. */
     uint32_t *sqtail;       /**< Pointer to the submission queue tail. */
     uint32_t *cqtail;       /**< Pointer to the completion queue tail. */
@@ -22,6 +21,8 @@ struct evio_uring {
     struct io_uring_sqe *sqe; /**< Pointer to the start of the SQE array. */
     size_t maxlen;          /**< Length of the main mmap'd region. */
     size_t sqelen;          /**< Length of the SQE mmap'd region. */
+    unsigned int inflight;  /**< Submitted operations whose CQEs are not processed. */
+    unsigned int queued;    /**< Operations queued since the last drain; each owns its slot. */
     int fd;                 /**< The io_uring file descriptor. */
 };
 
@@ -68,7 +69,10 @@ int evio_uring_enter(unsigned int fd,
 }
 
 /**
- * @brief Submits pending `io_uring` operations and waits for their completion.
+ * @brief Submits pending `io_uring` operations and waits for in-flight completions.
+ * @details After a successful submission `io_uring_enter()` returns the
+ *          submitted count even if the wait ends early, so completions are
+ *          counted by processed CQEs.
  * @param loop The event loop.
  */
 static void evio_uring_submit_and_wait(evio_loop *loop)
@@ -80,13 +84,15 @@ static void evio_uring_submit_and_wait(evio_loop *loop)
     // GCOVR_EXCL_STOP
 
     unsigned int n = loop->iou_count;
+    unsigned int wait = iou->inflight + n;
     // GCOVR_EXCL_START
-    EVIO_ASSERT(n);
+    EVIO_ASSERT(wait);
     // GCOVR_EXCL_STOP
 
     for (;;) { // GCOVR_EXCL_LINE
-        int ret = evio_uring_enter(iou->fd, n, n, IORING_ENTER_GETEVENTS,
-                                   &loop->sigmask, sizeof(loop->sigmask));
+        // The kernel sigset size, not sizeof(sigset_t), or a sleeping wait fails with EINVAL.
+        int ret = evio_uring_enter(iou->fd, n, wait, IORING_ENTER_GETEVENTS,
+                                   &loop->sigmask, _NSIG / 8);
         // GCOVR_EXCL_START
         if (__evio_unlikely(ret < 0)) {
             int err = ret == -1 ? errno : -ret;
@@ -102,6 +108,7 @@ static void evio_uring_submit_and_wait(evio_loop *loop)
         break;
     }
 
+    iou->inflight += n;
     loop->iou_count = 0;
 }
 
@@ -116,16 +123,14 @@ void evio_uring_ctl(evio_loop *loop, int op, int fd, const struct epoll_event *e
                 op == EPOLL_CTL_MOD);
     // GCOVR_EXCL_STOP
 
-    uint32_t mask = iou->sqmask;
-    uint32_t tail = *iou->sqtail;
-    uint32_t head = evio_uring_load(iou->sqhead);
-
-    if (__evio_unlikely(((tail + 1) & mask) == (head & mask))) {
+    // CQEs may complete out of order and a retry reads events[slot],
+    // so slots are reused only after evio_uring_flush() drains the ring.
+    if (__evio_unlikely(iou->queued >= iou->sqmask)) {
         evio_uring_flush(loop);
-        head = evio_uring_load(iou->sqhead);
     }
 
-    uint32_t slot = tail & mask;
+    uint32_t tail = *iou->sqtail;
+    uint32_t slot = tail & iou->sqmask;
 
     struct epoll_event *event = &iou->events[slot];
     *event = *ev;
@@ -143,6 +148,7 @@ void evio_uring_ctl(evio_loop *loop, int op, int fd, const struct epoll_event *e
     };
 
     evio_uring_store(iou->sqtail, ++tail);
+    ++iou->queued;
     ++loop->iou_count;
 }
 
@@ -154,19 +160,24 @@ void evio_uring_flush(evio_loop *loop)
     EVIO_ASSERT(iou && iou->fd >= 0);
     // GCOVR_EXCL_STOP
 
-    while (loop->iou_count) {
+    while (loop->iou_count || iou->inflight) {
         evio_uring_submit_and_wait(loop);
 
-        uint32_t head = *iou->cqhead;
-        uint32_t tail = evio_uring_load(iou->cqtail);
+        for (;;) {
+            uint32_t head = *iou->cqhead;
+            if (head == evio_uring_load(iou->cqtail)) {
+                break;
+            }
 
-        for (; head != tail; ++head) {
-            uint32_t mask = iou->cqmask;
-            uint32_t slot = head & mask;
+            const struct io_uring_cqe *cqe = &iou->cqe[head & iou->cqmask];
+            uint64_t user_data = cqe->user_data;
+            int res = cqe->res;
 
-            const struct io_uring_cqe *cqe = &iou->cqe[slot];
+            // Consume before a retry can re-enter evio_uring_flush().
+            evio_uring_store(iou->cqhead, head + 1);
+            --iou->inflight;
 
-            uint32_t fd32 = cqe->user_data & UINT32_MAX;
+            uint32_t fd32 = user_data & UINT32_MAX;
             // GCOVR_EXCL_START
             if (__evio_unlikely(fd32 >= loop->fds.count)) {
                 EVIO_ABORT("Invalid fd %u\n", fd32);
@@ -174,7 +185,7 @@ void evio_uring_flush(evio_loop *loop)
             // GCOVR_EXCL_STOP
 
             int fd = fd32;
-            int op = (cqe->user_data >> 32) & 3;
+            int op = (user_data >> 32) & 3;
             // GCOVR_EXCL_START
             if (__evio_unlikely(op != EPOLL_CTL_ADD &&
                                 op != EPOLL_CTL_MOD)) {
@@ -182,33 +193,33 @@ void evio_uring_flush(evio_loop *loop)
             }
             // GCOVR_EXCL_STOP
 
-            slot = (cqe->user_data >> 34) & 0xFF;
+            uint32_t slot = (user_data >> 34) & 0xFF;
             // GCOVR_EXCL_START
             if (__evio_unlikely(slot >= EVIO_URING_EVENTS)) {
                 EVIO_ABORT("Invalid fd %d slot %u\n", fd, slot);
             }
             // GCOVR_EXCL_STOP
 
-            const struct epoll_event *ev = &iou->events[slot];
-
-            int res = cqe->res;
             EVIO_URING_CQE_OVERRIDE(fd, op, &res);
 
             if (__evio_likely(res == 0)) {
                 continue;
             }
 
+            // A retry may drain the ring and reuse this slot.
+            const struct epoll_event ev = iou->events[slot];
+
             switch (res) {
                 case -EEXIST:
                     if (op == EPOLL_CTL_ADD) {
-                        evio_uring_ctl(loop, EPOLL_CTL_MOD, fd, ev);
+                        evio_uring_ctl(loop, EPOLL_CTL_MOD, fd, &ev);
                         break;
                     }
                     __evio_fallthrough;
 
                 case -ENOENT:
                     if (op == EPOLL_CTL_MOD && res == -ENOENT) {
-                        evio_uring_ctl(loop, EPOLL_CTL_ADD, fd, ev);
+                        evio_uring_ctl(loop, EPOLL_CTL_ADD, fd, &ev);
                         break;
                     }
                     __evio_fallthrough;
@@ -226,11 +237,9 @@ void evio_uring_flush(evio_loop *loop)
                     break;
             }
         }
-
-        if (*iou->cqhead != head) { // GCOVR_EXCL_LINE
-            evio_uring_store(iou->cqhead, head);
-        }
     }
+
+    iou->queued = 0;
 }
 
 /**
@@ -524,7 +533,6 @@ evio_uring *evio_uring_new(void)
 
     evio_uring *iou = evio_malloc(sizeof(*iou));
     *iou = (evio_uring) {
-        .sqhead     = (uint32_t *)(ptr + params.sq_off.head),
         .cqhead     = (uint32_t *)(ptr + params.cq_off.head),
         .sqtail     = (uint32_t *)(ptr + params.sq_off.tail),
         .cqtail     = (uint32_t *)(ptr + params.cq_off.tail),

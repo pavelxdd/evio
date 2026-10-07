@@ -23,6 +23,7 @@
 #ifdef EVIO_TESTING
 
 void evio_uring_test_inject_cqe_res_once(int fd, int op, int res);
+void evio_uring_test_inject_enter_defer_once(unsigned int count);
 void evio_uring_test_inject_reset(void);
 
 void evio_uring_test_probe_reset(void);

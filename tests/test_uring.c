@@ -8,6 +8,9 @@ static struct {
     int op;
     int res;
     bool active;
+
+    unsigned int enter_defer;
+    unsigned int enter_deferred;
 } evio_uring_injection;
 
 static struct {
@@ -51,9 +54,16 @@ void evio_uring_test_inject_cqe_res_once(int fd, int op, int res)
     evio_uring_injection.active = true;
 }
 
+void evio_uring_test_inject_enter_defer_once(unsigned int count)
+{
+    evio_uring_injection.enter_defer = count;
+}
+
 void evio_uring_test_inject_reset(void)
 {
     evio_uring_injection.active = false;
+    evio_uring_injection.enter_defer = 0;
+    evio_uring_injection.enter_deferred = 0;
 }
 
 void evio_uring_test_probe_reset(void)
@@ -154,6 +164,30 @@ int evio_test_uring_enter(unsigned int fd,
                     evio_uring_probe_injection.enter_err : EINVAL;
         }
         return evio_uring_probe_injection.enter_ret;
+    }
+
+    // A sleeping wait rejects any other size with EINVAL.
+    if (sig) {
+        assert_int_equal(sz, _NSIG / 8);
+    }
+
+    // Deferred SQEs stay in the ring and complete in the next call.
+    unsigned int deferred = evio_uring_injection.enter_deferred;
+    if (deferred) {
+        evio_uring_injection.enter_deferred = 0;
+        int ret = (int)syscall(SYS_io_uring_enter, fd, to_submit + deferred,
+                               min_complete, flags, sig, sz);
+        return ret < 0 ? ret : ret - (int)deferred;
+    }
+
+    unsigned int defer = evio_uring_injection.enter_defer;
+    if (defer && defer <= to_submit) {
+        evio_uring_injection.enter_defer = 0;
+        evio_uring_injection.enter_deferred = defer;
+        to_submit -= defer;
+        int ret = (int)syscall(SYS_io_uring_enter, fd, to_submit,
+                               to_submit, flags, sig, sz);
+        return ret < 0 ? ret : ret + (int)defer;
     }
 
     return (int)syscall(SYS_io_uring_enter, fd, to_submit, min_complete, flags, sig, sz);
@@ -949,6 +983,49 @@ TEST(test_evio_poll_uring_lazy_del_fd_reuse)
     evio_poll_stop(loop, &io2);
     close(fds[0]);
     close(fds[1]);
+    evio_loop_free(loop);
+}
+
+// io_uring_enter() returned before the last ADD completed.
+TEST(test_evio_poll_uring_late_completion)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    assert_non_null(loop);
+
+    // GCOVR_EXCL_START
+    if (!loop->iou) {
+        evio_loop_free(loop);
+        TEST_SKIPF("io_uring unsupported by kernel");
+    }
+    // GCOVR_EXCL_STOP
+
+    evio_poll io[2];
+    int fds[2][2];
+
+    for (size_t i = 0; i < 2; ++i) {
+        fds[i][0] = fds[i][1] = -1;
+        assert_int_equal(pipe(fds[i]), 0);
+        evio_poll_init(&io[i], read_and_count_cb, fds[i][0], EVIO_READ);
+        io[i].data = &data;
+        evio_poll_start(loop, &io[i]);
+    }
+
+    evio_uring_test_inject_enter_defer_once(1);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+
+    for (size_t i = 0; i < 2; ++i) {
+        assert_int_equal(write(fds[i][1], "x", 1), 1);
+    }
+
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data.called, 2);
+
+    for (size_t i = 0; i < 2; ++i) {
+        evio_poll_stop(loop, &io[i]);
+        close(fds[i][0]);
+        close(fds[i][1]);
+    }
     evio_loop_free(loop);
 }
 
