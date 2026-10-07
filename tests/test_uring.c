@@ -174,20 +174,28 @@ int evio_test_uring_enter(unsigned int fd,
     // Deferred SQEs stay in the ring and complete in the next call.
     unsigned int deferred = evio_uring_injection.enter_deferred;
     if (deferred) {
-        evio_uring_injection.enter_deferred = 0;
         int ret = (int)syscall(SYS_io_uring_enter, fd, to_submit + deferred,
                                min_complete, flags, sig, sz);
-        return ret < 0 ? ret : ret - (int)deferred;
+        if (ret < 0) {
+            return ret;
+        }
+        assert_int_equal(ret, to_submit + deferred);
+        evio_uring_injection.enter_deferred = 0;
+        return ret - (int)deferred;
     }
 
     unsigned int defer = evio_uring_injection.enter_defer;
     if (defer && defer <= to_submit) {
-        evio_uring_injection.enter_defer = 0;
-        evio_uring_injection.enter_deferred = defer;
         to_submit -= defer;
         int ret = (int)syscall(SYS_io_uring_enter, fd, to_submit,
                                to_submit, flags, sig, sz);
-        return ret < 0 ? ret : ret + (int)defer;
+        if (ret < 0) {
+            return ret;
+        }
+        assert_int_equal(ret, to_submit);
+        evio_uring_injection.enter_defer = 0;
+        evio_uring_injection.enter_deferred = defer;
+        return ret + (int)defer;
     }
 
     return (int)syscall(SYS_io_uring_enter, fd, to_submit, min_complete, flags, sig, sz);
@@ -1027,6 +1035,28 @@ TEST(test_evio_poll_uring_late_completion)
         close(fds[i][1]);
     }
     evio_loop_free(loop);
+}
+
+// A failed io_uring_enter() keeps the deferred-submit state for the retry.
+TEST(test_evio_uring_enter_defer_error)
+{
+    evio_uring_test_inject_reset();
+    evio_uring_test_inject_enter_defer_once(1);
+
+    assert_int_equal(evio_test_uring_enter(UINT_MAX, 2, 2, 0, NULL, 0), -1);
+    assert_int_equal(errno, EBADF);
+    assert_int_equal(evio_uring_injection.enter_defer, 1);
+    assert_int_equal(evio_uring_injection.enter_deferred, 0);
+
+    evio_uring_injection.enter_defer = 0;
+    evio_uring_injection.enter_deferred = 1;
+
+    assert_int_equal(evio_test_uring_enter(UINT_MAX, 0, 1, 0, NULL, 0), -1);
+    assert_int_equal(errno, EBADF);
+    assert_int_equal(evio_uring_injection.enter_defer, 0);
+    assert_int_equal(evio_uring_injection.enter_deferred, 1);
+
+    evio_uring_test_inject_reset();
 }
 
 TEST(test_evio_uring_probe_epoll_ctl)
