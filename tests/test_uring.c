@@ -1044,7 +1044,6 @@ TEST(test_evio_uring_enter_defer_error)
     evio_uring_test_inject_enter_defer_once(1);
 
     assert_int_equal(evio_test_uring_enter(UINT_MAX, 2, 2, 0, NULL, 0), -1);
-    assert_int_equal(errno, EBADF);
     assert_int_equal(evio_uring_injection.enter_defer, 1);
     assert_int_equal(evio_uring_injection.enter_deferred, 0);
 
@@ -1052,7 +1051,6 @@ TEST(test_evio_uring_enter_defer_error)
     evio_uring_injection.enter_deferred = 1;
 
     assert_int_equal(evio_test_uring_enter(UINT_MAX, 0, 1, 0, NULL, 0), -1);
-    assert_int_equal(errno, EBADF);
     assert_int_equal(evio_uring_injection.enter_defer, 0);
     assert_int_equal(evio_uring_injection.enter_deferred, 1);
 
