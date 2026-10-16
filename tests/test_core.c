@@ -277,7 +277,8 @@ TEST(test_evio_invalidate_with_pending_change)
 
     evio_poll_stop(loop, &io);
 
-    assert_int_equal(loop->fdchanges.count, 1);
+    assert_int_equal(loop->fdchanges.count, 0);
+    assert_int_equal(loop->fds.ptr[fds[0]].changes, 0);
     assert_int_equal(evio_refcount(loop), 0);
 
     evio_run(loop, EVIO_RUN_NOWAIT);
@@ -310,7 +311,8 @@ TEST(test_evio_invalidate_with_pending_error)
 
     evio_poll_stop(loop, &io);
 
-    assert_int_equal(loop->fderrors.count, 1);
+    assert_int_equal(loop->fderrors.count, 0);
+    assert_int_equal(loop->fds.ptr[fds[0]].errors, 0);
     assert_int_equal(evio_refcount(loop), 0);
 
     evio_run(loop, EVIO_RUN_NOWAIT);
@@ -344,7 +346,10 @@ TEST(test_evio_flush_fd_change_multiple)
     assert_int_equal(loop->fds.ptr[fds[2][0]].changes, 3);
 
     evio_poll_stop(loop, &io[0]);
-    assert_int_equal(loop->fdchanges.count, 3);
+    assert_int_equal(loop->fdchanges.count, 2);
+    assert_int_equal(loop->fds.ptr[fds[0][0]].changes, 0);
+    assert_int_equal(loop->fds.ptr[fds[1][0]].changes, 2);
+    assert_int_equal(loop->fds.ptr[fds[2][0]].changes, 1);
 
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(loop->fdchanges.count, 0);
@@ -387,7 +392,10 @@ TEST(test_evio_flush_fd_error_multiple)
     assert_int_equal(loop->fds.ptr[fds[2][0]].errors, 3);
 
     evio_poll_stop(loop, &io[0]);
-    assert_int_equal(loop->fderrors.count, 3);
+    assert_int_equal(loop->fderrors.count, 2);
+    assert_int_equal(loop->fds.ptr[fds[0][0]].errors, 0);
+    assert_int_equal(loop->fds.ptr[fds[1][0]].errors, 2);
+    assert_int_equal(loop->fds.ptr[fds[2][0]].errors, 1);
 
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(loop->fderrors.count, 2);
@@ -400,6 +408,44 @@ TEST(test_evio_flush_fd_error_multiple)
         close(fds[i][1]);
     }
 
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_invalidate_fd_enoent)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+    prepare_fd_for_loop(loop, fds[0]);
+    loop->fds.ptr[fds[0]].emask = EVIO_READ;
+
+    assert_int_equal(evio_invalidate_fd(loop, fds[0]), 0);
+    assert_int_equal(loop->fds.ptr[fds[0]].emask, 0);
+    assert_true(loop->fds.ptr[fds[0]].flags & EVIO_FD_INVAL);
+
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_invalidate_fd_ebadf)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+    prepare_fd_for_loop(loop, fds[0]);
+    loop->fds.ptr[fds[0]].emask = EVIO_READ;
+    assert_int_equal(close(fds[0]), 0);
+
+    assert_int_equal(evio_invalidate_fd(loop, fds[0]), 0);
+    assert_int_equal(loop->fds.ptr[fds[0]].emask, 0);
+    assert_true(loop->fds.ptr[fds[0]].flags & EVIO_FD_INVAL);
+
+    close(fds[1]);
     evio_loop_free(loop);
 }
 

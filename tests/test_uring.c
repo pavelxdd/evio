@@ -939,8 +939,7 @@ TEST(test_evio_uring_no_retry_on_ebadf_injected)
     evio_loop_free(loop);
 }
 
-// io_uring: lazy DEL → fd removed from kernel epoll → EVIO_POLL forces MOD → ENOENT → ADD.
-TEST(test_evio_poll_uring_lazy_del_fd_reuse)
+TEST(test_evio_poll_uring_stop_fd_reuse)
 {
     generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
@@ -964,18 +963,21 @@ TEST(test_evio_poll_uring_lazy_del_fd_reuse)
     evio_run(loop, EVIO_RUN_NOWAIT);
     uint32_t gen_after_add = loop->fds.ptr[fd].gen;
 
-    // Stop → lazy DEL preserves emask.
+    int replacement[2] = { -1, -1 };
+    assert_int_equal(pipe(replacement), 0);
+
     evio_poll_stop(loop, &io1);
-    evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(loop->fds.ptr[fd].emask, EVIO_READ);
+    assert_int_equal(loop->fds.ptr[fd].emask, 0);
     assert_int_equal(loop->fds.ptr[fd].gen, gen_after_add);
+    assert_int_equal(loop->fdchanges.count, 0);
+    assert_int_equal(loop->iou_count, 0);
 
-    // Simulate close(fd) removing fd from kernel epoll.
-    struct epoll_event ev = { 0 };
-    assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_DEL, fd, &ev), 0);
+    struct epoll_event ev = { .events = EPOLLIN };
+    assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_MOD, fd, &ev), -1);
+    assert_int_equal(errno, ENOENT);
+    assert_int_equal(close(fd), 0);
+    assert_int_equal(dup2(replacement[0], fd), fd);
 
-    // New watcher on same fd, same mask via io_uring.
-    // EVIO_POLL forces uring MOD → ENOENT → uring ADD.
     evio_poll io2;
     evio_poll_init(&io2, generic_cb, fd, EVIO_READ);
     io2.data = &data;
@@ -983,7 +985,7 @@ TEST(test_evio_poll_uring_lazy_del_fd_reuse)
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_true(loop->fds.ptr[fd].gen > gen_after_add);
 
-    assert_int_equal(write(fds[1], "x", 1), 1);
+    assert_int_equal(write(replacement[1], "x", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
     assert_int_equal(data.called, 1);
     assert_true(data.emask & EVIO_READ);
@@ -991,6 +993,8 @@ TEST(test_evio_poll_uring_lazy_del_fd_reuse)
     evio_poll_stop(loop, &io2);
     close(fds[0]);
     close(fds[1]);
+    close(replacement[0]);
+    close(replacement[1]);
     evio_loop_free(loop);
 }
 

@@ -139,7 +139,7 @@ int evio_invalidate_fd(evio_loop *loop, int fd)
     }
 
     int err = errno;
-    if (err == EPERM || err == ENOENT) {
+    if (err == EPERM || err == ENOENT || err == EBADF) {
         return 0;
     }
 

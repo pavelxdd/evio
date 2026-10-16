@@ -53,7 +53,11 @@ void evio_poll_stop(evio_loop *loop, evio_poll *w)
     evio_unref(loop);
     w->active = 0;
 
-    evio_queue_fd_change(loop, w->fd, 0);
+    int ret = evio_invalidate_fd(loop, w->fd);
+    EVIO_ASSERT(ret >= 0);
+    if (ret > 0) {
+        evio_queue_fd_change(loop, w->fd, 0);
+    }
 }
 
 void evio_poll_change(evio_loop *loop, evio_poll *w, int fd, evio_mask emask)

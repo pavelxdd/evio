@@ -678,11 +678,10 @@ TEST(test_evio_poll_eexist_same_mask)
     assert_int_equal(loop->fds.ptr[fds[0]].emask, EVIO_READ);
 
     evio_poll_stop(loop, &io);
+    assert_int_equal(loop->fds.ptr[fds[0]].emask, 0);
 
-    // Trigger reactive DEL.
     assert_int_equal(write(fds[1], "x", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(loop->fds.ptr[fds[0]].emask, 0);
 
     char buf[1];
     assert_int_equal(read(fds[0], buf, 1), 1);
@@ -885,8 +884,8 @@ TEST(test_evio_poll_error_and_stop)
     // Stop watcher with pending error.
     evio_poll_stop(loop, &io);
     assert_int_equal(evio_refcount(loop), 0);
+    assert_int_equal(loop->fderrors.count, 0);
 
-    // Process fderrors list; no watchers => flush.
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     assert_int_equal(loop->fderrors.count, 0);
@@ -1021,12 +1020,7 @@ TEST(test_evio_poll_stale_event_gen_mismatch)
     evio_poll_stop(loop, &io1);
     evio_poll_start(loop, &io2);
 
-    // Run the loop once.
-    // - evio_poll_update will see the mask changed from READ to WRITE,
-    //   call epoll_ctl(MOD), and increment gen to 2.
-    // - evio_poll_wait will receive both the stale READ event (for gen=1) and
-    //   the fresh WRITE event (for gen=2).
-    // - discard READ event, process WRITE.
+    // evio_poll_update adds the new WRITE registration with gen=2.
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     // Stale watcher callback does not fire.
@@ -1257,11 +1251,10 @@ TEST(test_evio_poll_eexist_mod_fail)
     evio_run(loop, EVIO_RUN_NOWAIT);
 
     evio_poll_stop(loop, &io1);
+    assert_int_equal(loop->fds.ptr[fds[0]].emask, 0);
 
-    // Trigger reactive DEL.
     assert_int_equal(write(fds[1], "x", 1), 1);
     evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(loop->fds.ptr[fds[0]].emask, 0);
 
     char buf[1];
     assert_int_equal(read(fds[0], buf, 1), 1);
@@ -1331,7 +1324,6 @@ TEST(test_evio_poll_enoent_add_fail)
     evio_loop_free(loop);
 }
 
-// Stale event after stop: invalidate_fd hits ENOENT.
 TEST(test_evio_poll_stale_event_after_stop)
 {
     generic_cb_data data = { 0 };
@@ -1421,8 +1413,73 @@ TEST(test_evio_poll_stop_on_closed_fd)
     evio_loop_free(loop);
 }
 
-// Lazy DEL preserves emask; EVIO_POLL on new watcher forces re-registration after fd reuse.
-TEST(test_evio_poll_lazy_del_fd_reuse)
+static void poll_stop_removes_fd(evio_flag flags)
+{
+    evio_loop *loop = evio_loop_new(flags);
+    assert_non_null(loop);
+
+    if ((flags & EVIO_FLAG_URING) && !loop->iou) {
+        evio_loop_free(loop);
+        TEST_SKIPF("io_uring unsupported by kernel");
+    }
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+    int fd = fds[0];
+    int duplicate = dup(fd);
+    assert_true(duplicate >= 0);
+
+    evio_poll io;
+    evio_poll_init(&io, dummy_cb, fd, EVIO_READ);
+    evio_poll_start(loop, &io);
+    evio_poll_update(loop);
+
+    assert_int_equal(write(fds[1], "x", 1), 1);
+    struct epoll_event ev;
+    assert_int_equal(epoll_wait(loop->fd, &ev, 1, 0), 1);
+
+    evio_poll_change(loop, &io, fd, EVIO_READ | EVIO_WRITE);
+    evio_poll_stop(loop, &io);
+
+    assert_int_equal(epoll_wait(loop->fd, &ev, 1, 0), 0);
+    assert_int_equal(loop->fds.ptr[fd].emask, 0);
+    assert_int_equal(loop->fds.ptr[fd].changes, 0);
+    assert_int_equal(loop->fdchanges.count, 0);
+    assert_int_equal(loop->iou_count, 0);
+
+    assert_int_equal(close(fd), 0);
+    assert_int_equal(epoll_wait(loop->fd, &ev, 1, 0), 0);
+    evio_poll_update(loop);
+    evio_poll_wait(loop, 0);
+
+    close(duplicate);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_poll_stop_removes_fd)
+{
+    poll_stop_removes_fd(EVIO_FLAG_NONE);
+}
+
+TEST(test_evio_poll_uring_stop_removes_fd)
+{
+    poll_stop_removes_fd(EVIO_FLAG_URING);
+}
+
+typedef struct {
+    int fd;
+    int result;
+} close_thread_arg;
+
+static void *close_thread_func(void *ptr)
+{
+    close_thread_arg *arg = ptr;
+    arg->result = close(arg->fd);
+    return NULL;
+}
+
+TEST(test_evio_poll_stop_fd_reuse)
 {
     generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
@@ -1431,27 +1488,39 @@ TEST(test_evio_poll_lazy_del_fd_reuse)
     int fds[2] = { -1, -1 };
     assert_int_equal(pipe(fds), 0);
     int fd = fds[0];
+    int duplicate = dup(fd);
+    assert_true(duplicate >= 0);
+    int replacement[2] = { -1, -1 };
+    assert_int_equal(pipe(replacement), 0);
 
     evio_poll io1;
     evio_poll_init(&io1, generic_cb, fd, EVIO_READ);
     io1.data = &data;
     evio_poll_start(loop, &io1);
     evio_poll_update(loop);
-    assert_int_equal(loop->fds.ptr[fd].emask, EVIO_READ);
     uint32_t gen_after_add = loop->fds.ptr[fd].gen;
 
-    // Stop → lazy DEL preserves emask.
+    evio_poll_change(loop, &io1, fd, EVIO_READ | EVIO_WRITE);
     evio_poll_stop(loop, &io1);
+
+    pthread_t thread;
+    close_thread_arg arg = { .fd = fd, .result = -1 };
+    assert_int_equal(pthread_create(&thread, NULL, close_thread_func, &arg), 0);
+    assert_int_equal(pthread_join(thread, NULL), 0);
+    assert_int_equal(arg.result, 0);
+    assert_int_equal(dup2(replacement[0], fd), fd);
+
+    // A late DEL for the old registration must not remove the replacement.
+    struct epoll_event ev = { .events = EPOLLIN };
+    ev.data.u64 = ((uint64_t)fd) | ((uint64_t)gen_after_add << 32);
+    assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_ADD, fd, &ev), 0);
+    assert_int_equal(write(fds[1], "x", 1), 1);
+    assert_int_equal(write(replacement[1], "y", 1), 1);
     evio_poll_update(loop);
-    assert_int_equal(loop->fds.ptr[fd].emask, EVIO_READ);
-    assert_int_equal(loop->fds.ptr[fd].gen, gen_after_add);
+    evio_poll_wait(loop, 0);
+    assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_MOD, fd, &ev), 0);
+    assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_DEL, fd, NULL), 0);
 
-    // Simulate close(fd) removing fd from kernel epoll.
-    struct epoll_event ev = { 0 };
-    assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_DEL, fd, &ev), 0);
-
-    // New watcher on same fd, same mask. EVIO_POLL forces epoll_ctl
-    // despite emask match. MOD → ENOENT → ADD recovery.
     evio_poll io2;
     evio_poll_init(&io2, generic_cb, fd, EVIO_READ);
     io2.data = &data;
@@ -1459,20 +1528,21 @@ TEST(test_evio_poll_lazy_del_fd_reuse)
     evio_poll_update(loop);
     assert_true(loop->fds.ptr[fd].gen > gen_after_add);
 
-    assert_int_equal(write(fds[1], "x", 1), 1);
     evio_poll_wait(loop, 0);
     evio_invoke_pending(loop);
     assert_int_equal(data.called, 1);
     assert_true(data.emask & EVIO_READ);
 
     evio_poll_stop(loop, &io2);
-    close(fds[0]);
+    close(fd);
+    close(duplicate);
     close(fds[1]);
+    close(replacement[0]);
+    close(replacement[1]);
     evio_loop_free(loop);
 }
 
-// Lazy DEL churn: stop → start same watcher without re-init → no epoll_ctl needed.
-TEST(test_evio_poll_lazy_del_churn)
+TEST(test_evio_poll_stop_restart)
 {
     generic_cb_data data = { 0 };
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
@@ -1489,18 +1559,15 @@ TEST(test_evio_poll_lazy_del_churn)
     evio_poll_update(loop);
     uint32_t gen_after_add = loop->fds.ptr[fd].gen;
 
-    // Stop → lazy DEL preserves emask.
     evio_poll_stop(loop, &io);
-    evio_poll_update(loop);
-    assert_int_equal(loop->fds.ptr[fd].emask, EVIO_READ);
+    assert_int_equal(loop->fds.ptr[fd].emask, 0);
     assert_int_equal(loop->fds.ptr[fd].gen, gen_after_add);
+    assert_int_equal(loop->fdchanges.count, 0);
 
-    // Re-start same watcher (no re-init, EVIO_POLL not set).
-    // poll_update skips epoll_ctl: same emask, no EVIO_POLL flag.
     evio_poll_start(loop, &io);
     evio_poll_update(loop);
     assert_int_equal(loop->fds.ptr[fd].emask, EVIO_READ);
-    assert_int_equal(loop->fds.ptr[fd].gen, gen_after_add);
+    assert_int_equal(loop->fds.ptr[fd].gen, gen_after_add + 1);
 
     assert_int_equal(write(fds[1], "x", 1), 1);
     evio_poll_wait(loop, 0);
@@ -1514,8 +1581,7 @@ TEST(test_evio_poll_lazy_del_churn)
     evio_loop_free(loop);
 }
 
-// Lazy DEL + EPOLLHUP: stop watcher → close remote end → reactive invalidate_fd.
-TEST(test_evio_poll_lazy_del_reactive_hup)
+TEST(test_evio_poll_stop_before_hup)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
@@ -1530,25 +1596,22 @@ TEST(test_evio_poll_lazy_del_reactive_hup)
     evio_poll_update(loop);
     assert_int_equal(loop->fds.ptr[fd].emask, EVIO_READ);
 
-    // Stop → lazy DEL preserves emask.
     evio_poll_stop(loop, &io);
-    evio_poll_update(loop);
-    assert_int_equal(loop->fds.ptr[fd].emask, EVIO_READ);
-
-    // Close remote end → EPOLLHUP on fd.
-    close(fds[1]);
-
-    // poll_wait: event for fd, list.count==0 → invalidate_fd → DEL.
-    evio_poll_wait(loop, 0);
     assert_int_equal(loop->fds.ptr[fd].emask, 0);
     assert_true(loop->fds.ptr[fd].flags & EVIO_FD_INVAL);
+    assert_int_equal(loop->fdchanges.count, 0);
+
+    close(fds[1]);
+    struct epoll_event ev;
+    assert_int_equal(epoll_wait(loop->fd, &ev, 1, 0), 0);
+    evio_poll_wait(loop, 0);
+    assert_int_equal(evio_pending_count(loop), 0);
 
     close(fds[0]);
     evio_loop_free(loop);
 }
 
-// Lazy DEL flushes pending fderrors when emask recomputes to 0.
-TEST(test_evio_poll_lazy_del_error_flush)
+TEST(test_evio_poll_stop_error_flush)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
@@ -1562,18 +1625,14 @@ TEST(test_evio_poll_lazy_del_error_flush)
     evio_poll_start(loop, &io);
     evio_poll_update(loop);
 
-    // Queue an error for this fd.
     evio_queue_fd_error(loop, fd);
     assert_int_equal(loop->fderrors.count, 1);
 
-    // Stop → queue change.
     evio_poll_stop(loop, &io);
-
-    // poll_update: lazy DEL path, fds->errors set → flush.
-    evio_poll_update(loop);
-    assert_int_equal(loop->fds.ptr[fd].emask, EVIO_READ);
+    assert_int_equal(loop->fds.ptr[fd].emask, 0);
     assert_int_equal(loop->fds.ptr[fd].errors, 0);
     assert_int_equal(loop->fderrors.count, 0);
+    assert_int_equal(loop->fdchanges.count, 0);
 
     close(fds[0]);
     close(fds[1]);

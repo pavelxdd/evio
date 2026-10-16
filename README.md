@@ -110,6 +110,7 @@ int main(void)
 - Linux-only (`epoll`, `eventfd`).
 - Allocator: can be customized via `evio_set_allocator()`.
 - Threading: `evio_loop` and watchers are single-threaded; cross-thread wakeups via `evio_async_send()`.
+- `evio_poll_stop()` removes the fd from epoll synchronously when stopping its last watcher, including with `EVIO_FLAG_URING`. After it returns, the caller may close the fd from another thread.
 - Fork: create a new loop after `fork()` in the child.
 - Fatal errors: unrecoverable conditions call `EVIO_ABORT` (customizable via `evio_set_abort()`).
 - `evio_invoke_pending()` is re-entrant; avoid unbounded recursion from callbacks.

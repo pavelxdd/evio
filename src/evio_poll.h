@@ -86,6 +86,8 @@ void evio_poll_start(evio_loop *loop, evio_poll *w);
 
 /**
  * @brief Stops a poll watcher, deactivating it.
+ * @details Stopping the last watcher removes the fd from epoll before returning.
+ *          The caller may then close the fd, including from another thread.
  * @param loop The event loop.
  * @param w The poll watcher to stop.
  */
