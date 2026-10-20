@@ -1,1 +1,7 @@
-shim
+#!/bin/sh
+set -e
+
+bindir="$(realpath "$(dirname "$(readlink -f "$0")")")"
+
+# shellcheck disable=SC1091
+. "${bindir}/shim"
