@@ -82,9 +82,7 @@ RUN --mount=type=bind,target=/app \
     && apt-get install -yq --no-install-recommends \
         sudo \
         bash \
-        bash-completion \
         nano \
-        tmux \
         less \
         gnupg \
         openssh-client \
@@ -124,7 +122,6 @@ RUN --mount=type=bind,target=/app \
         zsh \
         zsh-autosuggestions \
         zsh-syntax-highlighting \
-        starship \
     \
     && install -m755 -t /usr/local/bin /app/docker/update-alternatives-gcc \
     && update-alternatives-gcc "${GCC_VERSION}" 60 2> /dev/null \
