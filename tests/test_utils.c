@@ -208,7 +208,6 @@ TEST(test_evio_abort_long_message)
     msg[sizeof(msg) - 1] = '\0';
 
     evio_test_abort_begin(&st, &jmp);
-    evio_set_abort(NULL, NULL);
 
     if (setjmp(jmp) == 0) {
         EVIO_ABORT("%s", msg);
@@ -226,7 +225,6 @@ TEST(test_evio_abort_vsnprintf_error)
     wchar_t bad[2] = { 0x110000, 0 };
 
     evio_test_abort_begin(&st, &jmp);
-    evio_set_abort(NULL, NULL);
 
     if (setjmp(jmp) == 0) {
         EVIO_ABORT("%ls", bad);

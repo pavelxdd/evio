@@ -1,7 +1,6 @@
 #pragma once
 
 #include <setjmp.h>
-#include <unistd.h>
 
 #include "evio.h"
 
@@ -11,8 +10,6 @@ struct evio_test_abort_state {
     void (*old_abort_func)(void);
     FILE *stream;
     bool stream_owned;
-    int stderr_fd;
-    bool stderr_redirected;
 };
 
 struct evio_test_abort_ctx {
@@ -67,12 +64,6 @@ static inline void evio_test_abort_begin(struct evio_test_abort_state *st, jmp_b
     }
     // GCOVR_EXCL_STOP
 
-    st->stderr_fd = dup(fileno(stderr));
-    // GCOVR_EXCL_START
-    st->stderr_redirected = st->stderr_fd >= 0 &&
-                            dup2(fileno(st->stream), fileno(stderr)) >= 0;
-    // GCOVR_EXCL_STOP
-
     evio_test_abort_jmp = jmp;
     evio_set_abort_func(evio_test_abort_func);
     evio_set_abort(evio_test_abort_handler, st);
@@ -82,13 +73,6 @@ static inline void evio_test_abort_end(struct evio_test_abort_state *st)
 {
     evio_set_abort_func(st->old_abort_func);
     evio_set_abort(st->old_abort_cb, st->old_abort_ctx);
-
-    if (st->stderr_redirected) {
-        (void)dup2(st->stderr_fd, fileno(stderr));
-    }
-    if (st->stderr_fd >= 0) {
-        close(st->stderr_fd);
-    }
 
     if (st->stream_owned) {
         fclose(st->stream);
