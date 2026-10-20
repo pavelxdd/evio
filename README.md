@@ -12,6 +12,8 @@
 
 ## Building
 
+Requires a C23 compiler (GCC 14+ or Clang 18+) and Meson 1.4.0+.
+
 just:
 ```bash
 just test          # Linux host

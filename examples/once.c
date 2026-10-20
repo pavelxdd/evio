@@ -37,7 +37,14 @@ int main(void)
     evio_once_start(loop, &once1, EVIO_TIME_FROM_SEC(5)); // 5s timeout
 
     printf("Writing to pipe to trigger I/O event...\n");
-    write(fds1[1], "a", 1);
+    if (write(fds1[1], "a", 1) != 1) {
+        perror("write");
+        evio_once_stop(loop, &once1);
+        close(fds1[0]);
+        close(fds1[1]);
+        evio_loop_free(loop);
+        return EXIT_FAILURE;
+    }
 
     evio_run(loop, EVIO_RUN_DEFAULT);
     close(fds1[0]);

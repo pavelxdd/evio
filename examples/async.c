@@ -1,5 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
+#include <time.h>
 #include <unistd.h>
 #include <pthread.h>
 
@@ -15,7 +17,13 @@ static void *thread_func(void *arg)
     thread_data_t *data = arg;
 
     printf("[Thread] Sleeping for 1 second...\n");
-    sleep(1);
+    struct timespec delay = { .tv_sec = 1 };
+    while (nanosleep(&delay, &delay) != 0) {
+        if (errno != EINTR) {
+            perror("nanosleep");
+            break;
+        }
+    }
 
     printf("[Thread] Waking up the event loop.\n");
     // Thread-safe.

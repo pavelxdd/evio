@@ -6,7 +6,7 @@
 #include "evio_loop.h"
 
 #ifdef EVIO_TESTING
-void evio_test_loop_after_timeout(evio_loop *loop, int *timeout);
+void evio_test_loop_after_timeout(evio_loop *loop, const int *timeout);
 #endif
 
 /**
@@ -54,7 +54,7 @@ static int evio_timeout(evio_loop *loop)
     }
 
     const evio_time diff_ns = node->time - loop->time;
-    const evio_time diff_ms = 1 + (diff_ns - 1) / EVIO_TIME_PER_MSEC;
+    const evio_time diff_ms = 1 + ((diff_ns - 1) / EVIO_TIME_PER_MSEC);
 
     if (__evio_unlikely(diff_ms >= INT_MAX)) {
         return INT_MAX;

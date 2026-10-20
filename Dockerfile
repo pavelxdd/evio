@@ -27,8 +27,8 @@ ARG LDFLAGS="-fuse-ld=bfd -Wl,-O1,--strip-all,--sort-common,--as-needed,-z,relro
 
 ENV DEBIAN_FRONTEND=noninteractive \
     APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=1 \
-    GCC_VERSION=15 \
-    LLVM_VERSION=21 \
+    GCC_VERSION=16 \
+    LLVM_VERSION=23 \
     LANGUAGE=${LANG} \
     LANG=${LANG} \
     LC_ALL=${LANG} \

@@ -37,6 +37,7 @@ static void dummy_libevent_cb(evutil_socket_t fd, short what, void *arg) {}
 
 static unsigned int env_u32(const char *name, unsigned int def, unsigned int max)
 {
+    // NOLINTNEXTLINE(concurrency-mt-unsafe): single-threaded startup.
     const char *s = getenv(name);
     if (!s || !*s) {
         return def;

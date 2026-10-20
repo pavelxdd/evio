@@ -356,13 +356,12 @@ TEST(test_evio_timer_random)
     assert_non_null(loop);
 
     evio_timer tm[MANY_RANDOM_TIMERS];
-    srand(time(NULL));
+    unsigned int seed = 1;
 
     for (size_t i = 0; i < MANY_RANDOM_TIMERS; ++i) {
         evio_timer_init(&tm[i], generic_cb, 0);
         tm[i].data = &data;
-        // NOLINTNEXTLINE(concurrency-mt-unsafe) - single-threaded test
-        evio_timer_start(loop, &tm[i], EVIO_TIME_FROM_MSEC(rand() % 100));
+        evio_timer_start(loop, &tm[i], EVIO_TIME_FROM_MSEC(rand_r(&seed) % 100));
     }
     assert_int_equal(evio_refcount(loop), MANY_RANDOM_TIMERS);
 

@@ -9,6 +9,7 @@ Checks: [
   '-bugprone-easily-swappable-parameters',
   '-bugprone-narrowing-conversions',
   '-bugprone-reserved-identifier',
+  '-bugprone-signed-bitwise',
   '-bugprone-switch-missing-default-case',
   '-bugprone-multi-level-implicit-pointer-conversion',
   'concurrency-*',
@@ -23,9 +24,11 @@ Checks: [
   '-portability-avoid-pragma-once',
   'readability-*',
   '-readability-function-cognitive-complexity',
+  '-readability-enum-initial-value',
   '-readability-identifier-length',
   '-readability-magic-numbers',
   '-readability-suspicious-call-argument',
+  '-readability-uppercase-literal-suffix',
 ]
 CheckOptions:
   readability-braces-around-statements.ShortStatementLines: 2

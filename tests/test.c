@@ -19,7 +19,7 @@ static const struct option options[] = {
     { "list",       0, 0, OPT_LIST },
     { "file",       0, 0, OPT_FILE },
     { "help",       0, 0, OPT_HELP },
-    {}
+    {},
 };
 
 // GCOVR_EXCL_START
@@ -70,6 +70,7 @@ int main(int argc, char *argv[])
     // GCOVR_EXCL_START
     for (opterr = optind = 0;;) {
         int arg = optind;
+        // NOLINTNEXTLINE(concurrency-mt-unsafe): single-threaded startup.
         int opt = getopt_long(argc, argv, "+h", options, NULL);
         if (opt < 0) {
             break;
@@ -78,8 +79,10 @@ int main(int argc, char *argv[])
         switch (opt) {
             case OPT_OUTPUT: {
                 if (optarg) {
-                    setenv("CMOCKA_MESSAGE_OUTPUT", optarg, true);
+                    // NOLINTNEXTLINE(concurrency-mt-unsafe): single-threaded startup.
+                    setenv("CMOCKA_MESSAGE_OUTPUT", optarg, 1);
                 } else {
+                    // NOLINTNEXTLINE(concurrency-mt-unsafe): single-threaded startup.
                     unsetenv("CMOCKA_MESSAGE_OUTPUT");
                 }
                 continue;

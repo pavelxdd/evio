@@ -475,7 +475,14 @@ TEST(test_evio_invalidate_fd_with_pending)
     int fds[3][2];
     for (int i = 0; i < 3; ++i) {
         fds[i][0] = fds[i][1] = -1;
-        assert_int_equal(pipe(fds[i]), 0);
+        if (pipe(fds[i]) != 0) {
+            for (int j = 0; j < i; ++j) {
+                close(fds[j][0]);
+                close(fds[j][1]);
+            }
+            evio_loop_free(loop);
+            fail();
+        }
     }
 
     prepare_fd_for_loop(loop, fds[0][0]);

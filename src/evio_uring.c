@@ -540,7 +540,7 @@ evio_uring *evio_uring_new(void)
         .cqmask     = *(uint32_t *)(ptr + params.cq_off.ring_mask),
         .ptr        = ptr,
         .cqe        = (struct io_uring_cqe *)(ptr + params.cq_off.cqes),
-        .sqe        = (struct io_uring_sqe *)(sqe),
+        .sqe        = (struct io_uring_sqe *)sqe,
         .maxlen     = maxlen,
         .sqelen     = sqelen,
         .fd         = fd,

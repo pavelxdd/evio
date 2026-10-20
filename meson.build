@@ -1,11 +1,11 @@
 project('evio', 'c',
     version: '0.11.2',
     license: 'MIT',
-    meson_version: '>=0.56.0',
+    meson_version: '>=1.4.0',
     default_options: [
         'buildtype=debugoptimized',
         'default_library=static',
-        'c_std=c11',
+        'c_std=c23',
         'werror=true',
         'warning_level=2',
         'b_ndebug=if-release',

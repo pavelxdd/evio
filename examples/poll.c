@@ -43,7 +43,14 @@ int main(void)
     evio_poll_start(loop, &w);
 
     printf("Writing to pipe to make it readable...\n");
-    write(write_fd, "hello", 5);
+    if (write(write_fd, "hello", 5) != 5) {
+        perror("write");
+        evio_poll_stop(loop, &w);
+        close(read_fd);
+        close(write_fd);
+        evio_loop_free(loop);
+        return EXIT_FAILURE;
+    }
 
     printf("Event loop running. Poll event is ready.\n");
 

@@ -54,13 +54,13 @@ static void bench_evio_churn(int fds[NUM_WATCHERS], bool use_uring)
     uint64_t end = get_time_ns();
 
     const char *name = use_uring ? "evio-uring" : "evio";
-    print_benchmark("poll_churn", name, end - start, NUM_ITERATIONS * NUM_WATCHERS * 2);
+    print_benchmark("poll_churn", name, end - start, (uint64_t)NUM_ITERATIONS * NUM_WATCHERS * 2);
 
     evio_loop_free(loop);
 }
 
 // --- libev ---
-static void bench_libev_churn(int fds[NUM_WATCHERS])
+static void bench_libev_churn(const int fds[NUM_WATCHERS])
 {
     struct ev_loop *loop = ev_loop_new(0);
     ev_io io[NUM_WATCHERS];
@@ -83,7 +83,7 @@ static void bench_libev_churn(int fds[NUM_WATCHERS])
     }
     uint64_t end = get_time_ns();
 
-    print_benchmark("poll_churn", "libev", end - start, NUM_ITERATIONS * NUM_WATCHERS * 2);
+    print_benchmark("poll_churn", "libev", end - start, (uint64_t)NUM_ITERATIONS * NUM_WATCHERS * 2);
 
     ev_loop_destroy(loop);
 }
@@ -112,7 +112,7 @@ static void bench_libevent_churn(int fds[NUM_WATCHERS])
     }
     uint64_t end = get_time_ns();
 
-    print_benchmark("poll_churn", "libevent", end - start, NUM_ITERATIONS * NUM_WATCHERS * 2);
+    print_benchmark("poll_churn", "libevent", end - start, (uint64_t)NUM_ITERATIONS * NUM_WATCHERS * 2);
 
     for (size_t i = 0; i < NUM_WATCHERS; ++i) {
         event_free(ev[i]);
@@ -144,7 +144,7 @@ static void bench_libuv_churn(int fds[NUM_WATCHERS])
     }
     uint64_t end = get_time_ns();
 
-    print_benchmark("poll_churn", "libuv", end - start, NUM_ITERATIONS * NUM_WATCHERS * 2);
+    print_benchmark("poll_churn", "libuv", end - start, (uint64_t)NUM_ITERATIONS * NUM_WATCHERS * 2);
 
     for (size_t i = 0; i < NUM_WATCHERS; ++i) {
         if (!uv_is_closing((uv_handle_t *)&io[i])) {

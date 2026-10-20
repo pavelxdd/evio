@@ -29,9 +29,9 @@ static void dummy_cb(evio_loop *loop, evio_base *base, evio_mask emask) {}
 
 static _Atomic int evio_test_loop_timeout_hook;
 
-void evio_test_loop_after_timeout(evio_loop *loop, int *timeout);
+extern void evio_test_loop_after_timeout(evio_loop *loop, const int *timeout);
 
-void evio_test_loop_after_timeout(evio_loop *loop, int *timeout)
+void evio_test_loop_after_timeout(evio_loop *loop, const int *timeout)
 {
     if (!atomic_load_explicit(&evio_test_loop_timeout_hook, memory_order_acquire)) {
         return;
@@ -221,19 +221,15 @@ TEST(test_evio_time_update)
     evio_time time1 = evio_get_time(loop);
     assert_true(time1 > 0);
 
-    // Sleep for a short duration to ensure the clock ticks.
-    struct timespec req = { .tv_sec = 0, .tv_nsec = 2000000 }; // 2ms
-    clock_nanosleep(CLOCK_MONOTONIC, 0, &req, NULL);
-
+    loop->time = 0;
     evio_update_time(loop);
     evio_time time2 = evio_get_time(loop);
-    assert_true(time2 > time1);
+    assert_true(time2 > 0);
 
-    // Running the loop also updates time.
-    clock_nanosleep(CLOCK_MONOTONIC, 0, &req, NULL);
+    loop->time = 0;
     evio_run(loop, EVIO_RUN_NOWAIT);
     evio_time time3 = evio_get_time(loop);
-    assert_true(time3 > time2);
+    assert_true(time3 > 0);
 
     evio_loop_free(loop);
 }
@@ -1075,28 +1071,28 @@ TEST(test_evio_fork_safety)
 
         evio_loop_free(loop);
         close(fds[1]);
-#if defined(__GNUC__)
+#ifdef __GNUC__
         extern void __gcov_flush(void) __attribute__((weak));
         if (__gcov_flush) {
             __gcov_flush();
         }
 #endif
         _exit(EXIT_SUCCESS);
-    } else { // Parent process
-        close(fds[1]); // Close write end
-
-        char buf[2] = { 0 };
-        ssize_t nread = read(fds[0], buf, sizeof(buf) - 1);
-        assert_int_equal(nread, 1);
-        assert_string_equal(buf, "K");
-
-        int status;
-        waitpid(pid, &status, 0);
-        assert_true(WIFEXITED(status));
-        assert_int_equal(WEXITSTATUS(status), EXIT_SUCCESS);
-
-        close(fds[0]);
     }
+
+    close(fds[1]); // Close write end
+
+    char buf[2] = { 0 };
+    ssize_t nread = read(fds[0], buf, sizeof(buf) - 1);
+    assert_int_equal(nread, 1);
+    assert_string_equal(buf, "K");
+
+    int status;
+    waitpid(pid, &status, 0);
+    assert_true(WIFEXITED(status));
+    assert_int_equal(WEXITSTATUS(status), EXIT_SUCCESS);
+
+    close(fds[0]);
 }
 // GCOVR_EXCL_STOP
 

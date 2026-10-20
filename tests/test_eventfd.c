@@ -164,11 +164,17 @@ TEST(test_evio_eventfd_write_ebadf)
     evio_eventfd_init(loop);
 
     int event_fd = loop->event.fd;
-    assert_true(event_fd >= 0);
+    if (event_fd < 0) {
+        evio_loop_free(loop);
+        fail();
+    }
 
     // Open a read-only fd to dup over the eventfd
     int read_only_fd = open("/dev/null", O_RDONLY);
-    assert_true(read_only_fd >= 0);
+    if (read_only_fd < 0) {
+        evio_loop_free(loop);
+        fail();
+    }
 
     // Now event_fd refers to a read-only file.
     int ret = dup2(read_only_fd, event_fd);

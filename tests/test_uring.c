@@ -632,7 +632,7 @@ TEST(test_evio_poll_uring_many_events)
     }
 
     // Drain all pending events from the loop.
-    drain_uring_events_loop(loop, &data, EVIO_URING_EVENTS, EVIO_URING_EVENTS * 2);
+    drain_uring_events_loop(loop, &data, EVIO_URING_EVENTS, EVIO_URING_EVENTS * (size_t)2);
     assert_int_equal(data.called, EVIO_URING_EVENTS);
 
     // Cleanup

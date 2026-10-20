@@ -43,6 +43,7 @@ enum {
 
 static unsigned int env_u32(const char *name, unsigned int def, unsigned int max)
 {
+    // NOLINTNEXTLINE(concurrency-mt-unsafe): single-threaded startup.
     const char *s = getenv(name);
     if (!s || !*s) {
         return def;
@@ -541,7 +542,7 @@ static void libev_conn_reopen(struct ev_loop *loop, libev_conn *c)
     int fds[2];
     if (socketpair_nb(fds) != 0) {
         int err = errno;
-        fprintf(stderr, "socketpair() failed, error %d: %s\n", err, strerror(err));
+        fprintf(stderr, "socketpair() failed, error %d: %s\n", err, EVIO_STRERROR(err));
         abort();
     }
 
@@ -1142,7 +1143,6 @@ struct libuv_worker {
     unsigned int churn_seq;
 
     libuv_conn *conn;
-    uint64_t msgs_target;
     uint64_t sent_msgs;
     uint64_t done_msgs;
 };
@@ -1203,12 +1203,11 @@ static void libuv_conn_cb(uv_poll_t *p, int status, int events)
     }
 
     int want = UV_READABLE | (c->out_pending ? UV_WRITABLE : 0);
-    if (!uv_is_closing((uv_handle_t *)c->poll)) {
-        if (!!(want & UV_WRITABLE) != c->want_write) {
-            uv_poll_start(c->poll, want, libuv_conn_cb);
-        }
+    bool want_write = (want & UV_WRITABLE) != 0;
+    if (!uv_is_closing((uv_handle_t *)c->poll) && want_write != c->want_write) {
+        uv_poll_start(c->poll, want, libuv_conn_cb);
     }
-    c->want_write = c->out_pending != 0;
+    c->want_write = want_write;
 }
 
 static void libuv_conn_reopen(libuv_worker *w, libuv_conn *c)
@@ -1266,12 +1265,15 @@ static void libuv_async_cb(uv_async_t *a)
 static void *libuv_workers_thread(void *ptr)
 {
     libuv_worker *w = ptr;
+    const unsigned int conns = w->conns;
+    const uint64_t msgs_target = (uint64_t)conns * MSGS_PER_CONN;
+
     w->loop = uv_loop_new();
     if (!w->loop) {
         abort();
     }
 
-    w->conn = calloc(w->conns, sizeof(*w->conn));
+    w->conn = calloc(conns, sizeof(*w->conn));
     if (!w->conn) {
         abort();
     }
@@ -1286,7 +1288,7 @@ static void *libuv_workers_thread(void *ptr)
     w->async.data = w;
     atomic_store_explicit(&w->alive, true, memory_order_release);
 
-    for (unsigned int i = 0; i < w->conns; ++i) {
+    for (unsigned int i = 0; i < conns; ++i) {
         libuv_conn *c = &w->conn[i];
         c->w = w;
         c->poll = NULL;
@@ -1300,26 +1302,26 @@ static void *libuv_workers_thread(void *ptr)
     pthread_barrier_wait(w->ready);
     pthread_barrier_wait(w->start);
 
-    uint64_t async_every = (uint64_t)w->k * (uint64_t)w->conns;
+    uint64_t async_every = (uint64_t)w->k * conns;
     uint64_t next_async = async_every ? async_every : UINT64_MAX;
 
     char in[MSG_SIZE];
     memset(in, 'x', sizeof(in));
 
     unsigned int seq = 0;
-    while (w->done_msgs < w->msgs_target) {
+    while (w->done_msgs < msgs_target) {
         unsigned int idxs[IO_BATCH];
         unsigned int nidx = 0;
 
-        for (; nidx < IO_BATCH && w->sent_msgs < w->msgs_target; ++nidx) {
-            unsigned int idx = seq++ % w->conns;
+        for (; nidx < IO_BATCH && w->sent_msgs < msgs_target; ++nidx) {
+            unsigned int idx = seq++ % conns;
             idxs[nidx] = idx;
 
             libuv_conn *c = &w->conn[idx];
             ssize_t n = write(c->cli_fd, in, sizeof(in));
             if (n > 0) {
                 c->cli_send_accum += (size_t)n;
-                while (c->cli_send_accum >= MSG_SIZE && w->sent_msgs < w->msgs_target) {
+                while (c->cli_send_accum >= MSG_SIZE && w->sent_msgs < msgs_target) {
                     c->cli_send_accum -= MSG_SIZE;
                     ++w->sent_msgs;
                 }
@@ -1338,7 +1340,7 @@ static void *libuv_workers_thread(void *ptr)
                 ssize_t n = read(c->cli_fd, out, sizeof(out));
                 if (n > 0) {
                     c->cli_recv_accum += (size_t)n;
-                    while (c->cli_recv_accum >= MSG_SIZE && w->done_msgs < w->msgs_target) {
+                    while (c->cli_recv_accum >= MSG_SIZE && w->done_msgs < msgs_target) {
                         c->cli_recv_accum -= MSG_SIZE;
                         ++w->done_msgs;
                     }
@@ -1352,7 +1354,7 @@ static void *libuv_workers_thread(void *ptr)
         }
 
         while (w->churn_pending && w->sent_msgs == w->done_msgs) {
-            unsigned int idx = w->churn_seq++ % w->conns;
+            unsigned int idx = w->churn_seq++ % conns;
             libuv_conn_reopen(w, &w->conn[idx]);
             --w->churn_pending;
         }
@@ -1373,7 +1375,7 @@ static void *libuv_workers_thread(void *ptr)
 
     uv_close((uv_handle_t *)&w->async, NULL);
 
-    for (unsigned int i = 0; i < w->conns; ++i) {
+    for (unsigned int i = 0; i < conns; ++i) {
         libuv_conn *c = &w->conn[i];
         if (c->poll && !uv_is_closing((uv_handle_t *)c->poll)) {
             uv_poll_stop(c->poll);
@@ -1432,7 +1434,6 @@ static void bench_libuv_workers(unsigned int workers, unsigned int conns, unsign
         w[i].idx = i;
         w[i].conns = conns;
         w[i].k = k;
-        w[i].msgs_target = (uint64_t)conns * MSGS_PER_CONN;
         if (pthread_create(&w[i].thr, NULL, libuv_workers_thread, &w[i]) != 0) {
             abort();
         }

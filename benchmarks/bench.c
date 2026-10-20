@@ -23,7 +23,7 @@ uint64_t get_time_ns(void)
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
+    return ((uint64_t)ts.tv_sec * 1000000000) + ts.tv_nsec;
 }
 
 void print_benchmark(const char *category, const char *name, uint64_t time_ns, uint64_t ops)

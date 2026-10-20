@@ -176,7 +176,7 @@ static void bench_libuv_idle(void)
 
     uv_timer_t timeout;
     uv_timer_init(loop, &timeout);
-    uv_timer_start(&timeout, libuv_timeout_cb, RUN_TIME_SEC * 1000, 0);
+    uv_timer_start(&timeout, libuv_timeout_cb, RUN_TIME_SEC * 1000ull, 0);
 
     size_t count = 0;
     idle.data = &count;

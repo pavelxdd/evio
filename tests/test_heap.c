@@ -13,13 +13,13 @@ TEST(test_evio_heap_sift)
     }
 
     heap[0] = (evio_node) {
-        .base = &b[0], .time = 100
+        .base = &b[0], .time = 100,
     };
     heap[1] = (evio_node) {
-        .base = &b[1], .time = 20
+        .base = &b[1], .time = 20,
     };
     heap[2] = (evio_node) {
-        .base = &b[2], .time = 30
+        .base = &b[2], .time = 30,
     };
     for (int i = 0; i < 3; ++i) {
         heap[i].base->active = i + 1;
@@ -29,13 +29,13 @@ TEST(test_evio_heap_sift)
     assert_int_equal(heap[0].time, 20);
 
     heap[0] = (evio_node) {
-        .base = &b[0], .time = 100
+        .base = &b[0], .time = 100,
     };
     heap[1] = (evio_node) {
-        .base = &b[1], .time = 30
+        .base = &b[1], .time = 30,
     };
     heap[2] = (evio_node) {
-        .base = &b[2], .time = 20
+        .base = &b[2], .time = 20,
     };
     for (int i = 0; i < 3; ++i) {
         heap[i].base->active = i + 1;
@@ -50,7 +50,9 @@ TEST(test_evio_heap_adjust_up)
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
 
-    evio_timer tm1, tm2, tm3;
+    evio_timer tm1;
+    evio_timer tm2;
+    evio_timer tm3;
     evio_timer_init(&tm1, dummy_cb, 0);
     evio_timer_init(&tm2, dummy_cb, 0);
     evio_timer_init(&tm3, dummy_cb, 0);
@@ -79,7 +81,7 @@ TEST(test_evio_heap_adjust_up)
 static bool is_min_heap(const evio_node *heap, size_t count)
 {
     for (size_t i = 0; i < count; ++i) {
-        size_t c = i * 4 + 1;
+        size_t c = (i * 4) + 1;
         for (size_t j = c; j < c + 4 && j < count; ++j) {
             if (heap[i].time > heap[j].time) {
                 return false;

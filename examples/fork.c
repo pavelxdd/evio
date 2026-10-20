@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -24,15 +25,26 @@ static void client_cb(evio_loop *loop, evio_base *base, evio_mask emask)
     if (emask & EVIO_READ) {
         ssize_t n = read(w->fd, buffer, sizeof(buffer));
         if (n > 0) {
-            // Echo data back to the client
-            write(w->fd, buffer, n);
-        } else {
-            // Error or connection closed
-            printf("[Child %d] Client disconnected (fd: %d).\n", getpid(), w->fd);
-            evio_poll_stop(loop, w);
-            close(w->fd);
-            free(w); // Free the watcher allocated in accept_cb
+            size_t sent = 0;
+            while (sent < (size_t)n) {
+                ssize_t written = write(w->fd, buffer + sent, (size_t)n - sent);
+                if (written > 0) {
+                    sent += (size_t)written;
+                    continue;
+                }
+                if (written < 0 && errno == EINTR) {
+                    continue;
+                }
+                break;
+            }
+            if (sent == (size_t)n) {
+                return;
+            }
         }
+        printf("[Child %d] Client disconnected (fd: %d).\n", getpid(), w->fd);
+        evio_poll_stop(loop, w);
+        close(w->fd);
+        free(w);
     }
 }
 
@@ -40,7 +52,7 @@ static void client_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 static void accept_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     evio_poll *w = (evio_poll *)base;
-    struct sockaddr_in client_addr;
+    struct sockaddr_in client_addr = { 0 };
     socklen_t client_len = sizeof(client_addr);
 
     int client_fd = accept(w->fd, (struct sockaddr *)&client_addr, &client_len);
@@ -49,8 +61,15 @@ static void accept_cb(evio_loop *loop, evio_base *base, evio_mask emask)
         return;
     }
 
+    char client_ip[INET_ADDRSTRLEN];
+    if (!inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip))) {
+        perror("inet_ntop");
+        close(client_fd);
+        return;
+    }
+
     printf("[Child %d] Accepted new connection (fd: %d) from %s:%d\n",
-           getpid(), client_fd, inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+           getpid(), client_fd, client_ip, ntohs(client_addr.sin_port));
 
     // Create a new poll watcher for the client connection
     evio_poll *client_w = malloc(sizeof(evio_poll));
@@ -70,14 +89,14 @@ static void child_signal_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 }
 
 // Main function for child processes
-static void run_child(int listen_fd, const sigset_t *parent_mask)
+static int run_child(int listen_fd, const sigset_t *parent_mask)
 {
     printf("[Child %d] Starting up.\n", getpid());
 
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     if (!loop) {
         perror("evio_loop_new in child");
-        exit(EXIT_FAILURE);
+        return EXIT_FAILURE;
     }
 
     // Watcher for new connections
@@ -97,7 +116,7 @@ static void run_child(int listen_fd, const sigset_t *parent_mask)
 
     evio_loop_free(loop);
     printf("[Child %d] Shutting down.\n", getpid());
-    exit(EXIT_SUCCESS);
+    return EXIT_SUCCESS;
 }
 
 // -- Parent Process Logic --
@@ -167,11 +186,14 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
     if (argc == 2) {
-        port = atoi(argv[1]);
-        if (port <= 0 || port > 65535) {
+        char *end = NULL;
+        errno = 0;
+        long value = strtol(argv[1], &end, 10);
+        if (errno || end == argv[1] || *end || value <= 0 || value > 65535) {
             fprintf(stderr, "Invalid port number: %s\n", argv[1]);
             return EXIT_FAILURE;
         }
+        port = (int)value;
     }
 
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -207,7 +229,7 @@ int main(int argc, char *argv[])
     evio_loop *parent_loop = evio_loop_new(EVIO_FLAG_NONE);
     parent_data pdata = {
         .children = calloc(NUM_CHILDREN, sizeof(child_info)),
-        .children_alive = 0
+        .children_alive = 0,
     };
     evio_set_userdata(parent_loop, &pdata);
 
@@ -217,7 +239,8 @@ int main(int argc, char *argv[])
     evio_signal_start(parent_loop, &parent_sig_w);
 
     // Block signals before forking to prevent races
-    sigset_t mask, oldmask;
+    sigset_t mask;
+    sigset_t oldmask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGINT);
     sigaddset(&mask, SIGTERM);
@@ -235,8 +258,7 @@ int main(int argc, char *argv[])
             // Child process: clean up parent resources and run its own logic
             free(pdata.children);
             evio_loop_free(parent_loop);
-            run_child(listen_fd, &oldmask);
-            return 0; // Should not be reached
+            return run_child(listen_fd, &oldmask);
         }
 
         // Parent process: store child info and watch its pidfd

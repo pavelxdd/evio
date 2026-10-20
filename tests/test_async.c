@@ -68,9 +68,9 @@ static bool async_wait_for(async_wait *w, size_t want, int timeout_ms)
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
 
-    ts.tv_nsec += (long)timeout_ms * 1000000L;
-    ts.tv_sec += ts.tv_nsec / 1000000000L;
-    ts.tv_nsec %= 1000000000L;
+    ts.tv_nsec += (long)timeout_ms * 1000000l;
+    ts.tv_sec += ts.tv_nsec / 1000000000l;
+    ts.tv_nsec %= 1000000000l;
 
     pthread_mutex_lock(&w->mu);
     while (w->called < want) {
