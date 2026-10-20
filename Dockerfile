@@ -106,6 +106,7 @@ RUN --mount=type=bind,target=/app \
         gcovr \
         valgrind \
         pre-commit \
+        devscripts \
         shellcheck \
         shfmt \
         yamllint \

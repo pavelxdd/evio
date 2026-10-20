@@ -6,7 +6,7 @@ set shell := ["bash", "-lc"]
 default: docker-test
 
 setup *ARGS:
-    meson setup build {{ARGS}} || meson setup build --reconfigure {{ARGS}}
+    meson setup build --reconfigure {{ARGS}}
 
 clean:
     rm -rf build
