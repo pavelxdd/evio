@@ -7,7 +7,7 @@
 !.gitlab-ci.*
 !.hadolint.*
 !.yamlfmt.*
-!.astylerc
+!.cstylerc
 !.clang-tidy
 !.clangd
 !.github

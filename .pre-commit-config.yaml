@@ -1,10 +1,10 @@
 repos:
   - repo: local
     hooks:
-      - id: astyle
-        name: astyle
-        entry: bin/astyle -Q -n
-        args: ['--options=.astylerc']
+      - id: cstyle
+        name: cstyle
+        entry: bin/cstyle -Q -n
+        args: ['--options=.cstylerc']
         language: system
         files: \.(c|h|h\.in)$
 

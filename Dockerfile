@@ -1,4 +1,8 @@
 # syntax=docker/dockerfile:1
+# hadolint ignore=DL3007
+FROM rust:latest AS rust
+RUN cargo install --locked --git https://github.com/pavelxdd/cstyle --tag 1.1.4 --root /usr/local cstyle
+
 FROM debian:sid-slim AS debian
 WORKDIR /tmp
 
@@ -52,17 +56,6 @@ RUN --mount=type=bind,target=/app \
     && apt-get full-upgrade -yq --auto-remove --purge \
     && apt-get install -yq --no-install-recommends \
         ca-certificates gpg curl \
-    \
-    && curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
-        | gpg --batch --yes --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg \
-    && printf "Types: deb\n%s\n%s\n%s\n%s\n" \
-              "URIs: https://apt.llvm.org/unstable/" \
-              "Suites: llvm-toolchain-${LLVM_VERSION}" \
-              "Components: main" \
-              "Signed-By: /etc/apt/trusted.gpg.d/llvm.gpg" \
-              > /etc/apt/sources.list.d/llvm.sources \
-    && printf "Package: *\nPin: origin %s\nPin-Priority: %s\n" \
-              "apt.llvm.org" "900" > /etc/apt/preferences.d/llvm \
     \
     && sed -i 's/http:/https:/g' /etc/apt/sources.list.d/debian.sources \
     \
@@ -161,32 +154,7 @@ RUN --mount=type=tmpfs,target=/tmp version=0.21.0 arch="" \
     && curl -fsSL "https://github.com/google/yamlfmt/releases/download/v${version}/${name}.tar.gz" | tar xz \
     && install -s --strip-program="${STRIP}" -m755 -t /usr/local/bin yamlfmt
 
-# astyle 3.1
-RUN --mount=type=tmpfs,target=/tmp revision=f5c6d520e63445bd411814831699238892f48715 \
-    && : "${CXXFLAGS:=}" "${LDFLAGS:=}" \
-    && cxxflags="${CXXFLAGS%\"}" && cxxflags="${cxxflags#\"}" \
-    && ldflags="${LDFLAGS%\"}" && ldflags="${ldflags#\"}" \
-    && curl -fsSL https://gitlab.com/saalen/astyle/-/archive/${revision}/astyle-${revision}.tar.gz \
-        | tar xz && cd astyle-${revision}/AStyle \
-    && cmake -Wno-dev \
-        -G Ninja \
-        -B build \
-        -D CMAKE_AR="${AR}" \
-        -D CMAKE_NM="${NM}" \
-        -D CMAKE_RANLIB="${RANLIB}" \
-        -D CMAKE_OBJDUMP="${OBJDUMP}" \
-        -D CMAKE_OBJCOPY="${OBJCOPY}" \
-        -D CMAKE_READELF="${READELF}" \
-        -D CMAKE_ADDR2LINE="${ADDR2LINE}" \
-        -D CMAKE_STRIP="${STRIP}" \
-        -D CMAKE_CXX_FLAGS="${cxxflags}" \
-        -D CMAKE_EXE_LINKER_FLAGS="${ldflags}" \
-        -D CMAKE_BUILD_TYPE=Release \
-        -D CMAKE_POSITION_INDEPENDENT_CODE=ON \
-        -D CMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
-        -D CMAKE_POLICY_VERSION_MINIMUM=3.5 \
-    && cmake --build build --target astyle \
-    && install -s --strip-program="${STRIP}" -m755 -t /usr/local/bin build/astyle
+COPY --from=rust /usr/local/bin/cstyle /usr/local/bin/cstyle
 
 ARG USERNAME="devcontainer"
 ARG USER_UID="1000"

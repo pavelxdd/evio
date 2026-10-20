@@ -36,11 +36,10 @@ examples:
     meson compile -C build -v examples
 
 format:
-    set -euo pipefail
-    { \
-      git ls-files '*.c' '*.h' '*.h.in'; \
-      git ls-files --others --exclude-standard '*.c' '*.h' '*.h.in'; \
-    } | sort -u | xargs -r ./bin/astyle --options=.astylerc -Q -n
+    cstyle --options=.cstylerc -Q -n -r --exclude=build -xi "*.c" "*.h" "*.h.in"
+
+format-check:
+    cstyle --options=.cstylerc -Q -n -r --exclude=build -xi --dry-run --error-on-changes "*.c" "*.h" "*.h.in"
 
 pre-commit:
     pre-commit run --all-files

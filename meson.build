@@ -359,20 +359,3 @@ if get_option('benchmarks')
         warning('matplotlib or numpy not found, skipping benchmark plotting.')
     endif
 endif
-
-astyle = find_program('astyle', required: false)
-if astyle.found()
-    custom_target('astyle',
-        output: 'astyle',
-        command: [
-            astyle,
-            '--options=@0@/.astylerc'.format(current_source_dir),
-            '-Q', '-n', '-r',
-            current_source_dir / '*.c',
-            current_source_dir / '*.h',
-            current_source_dir / '*.h.in',
-        ],
-        console: true,
-        build_by_default: false
-    )
-endif
