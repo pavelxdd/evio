@@ -350,6 +350,7 @@ if get_option('benchmarks')
         'churn',
         'workers',
         'mt_churn',
+        'rx',
     ]
 
     foreach name : benchmarks
