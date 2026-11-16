@@ -36,8 +36,9 @@ evio_time evio_get_time(const evio_loop *loop);
 
 /**
  * @brief Updates the loop's cached monotonic time to the current value.
- * @details Timers use `loop->time`. The loop updates it once per iteration; call
- * this if you need a refresh inside a long callback or from a prepare watcher.
+ * @details Timers use `loop->time`. The loop refreshes it after I/O waits, including
+ * interrupted timed waits; call this if you need a refresh inside a long
+ * callback or from a prepare watcher.
  * @param loop The event loop to update.
  */
 __evio_public __evio_nonnull(1)

@@ -195,6 +195,9 @@ void evio_poll_wait(evio_loop *loop, int timeout)
         timeout = 0;
     }
 
+    evio_time remaining = timeout > 0 ? EVIO_TIME_FROM_MSEC(timeout) : 0;
+    evio_time time = loop->time;
+
     int events_count;
     for (;;) {
         events_count = epoll_pwait(loop->fd,
@@ -207,6 +210,18 @@ void evio_poll_wait(evio_loop *loop, int timeout)
 
         int err = errno;
         if (err == EINTR) {
+            if (timeout > 0) {
+                evio_update_time(loop);
+                const evio_time elapsed = loop->time - time;
+                if (elapsed >= remaining) {
+                    events_count = 0;
+                    break;
+                }
+
+                remaining -= elapsed;
+                time = loop->time;
+                timeout = (int)(1 + ((remaining - 1) / EVIO_TIME_PER_MSEC));
+            }
             continue;
         }
 

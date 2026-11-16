@@ -233,6 +233,10 @@ if get_option('tests')
             '-UNDEBUG',
             '-fno-inline',
         ],
+        link_args: [
+            '-Wl,--wrap=epoll_pwait',
+            '-Wl,--wrap=clock_gettime',
+        ],
         include_directories: [
             include_directories('src'),
             include_directories('tests/include', is_system: true),
