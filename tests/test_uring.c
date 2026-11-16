@@ -495,6 +495,73 @@ TEST(test_evio_poll_uring_eexist_error)
     evio_loop_free(loop);
 }
 
+TEST(test_evio_poll_uring_eexist_slot_reuse)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    assert_non_null(loop);
+
+    // GCOVR_EXCL_START
+    if (!loop->iou) {
+        evio_loop_free(loop);
+        TEST_SKIPF("io_uring unsupported by kernel");
+    }
+    // GCOVR_EXCL_STOP
+
+    evio_poll io[EVIO_URING_EVENTS + 1];
+    int fds[EVIO_URING_EVENTS + 1][2];
+    struct epoll_event events[EVIO_URING_EVENTS + 1];
+    bool seen[EVIO_URING_EVENTS + 1] = { 0 };
+
+    for (size_t i = 0; i < EVIO_URING_EVENTS + 1; ++i) {
+        fds[i][0] = fds[i][1] = -1;
+        assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds[i]), 0);
+
+        struct epoll_event ev = { 0 };
+        assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_ADD, fds[i][0], &ev), 0);
+
+        evio_mask emask = EVIO_READ;
+        if (i & 1) {
+            emask |= EVIO_WRITE;
+        }
+        evio_poll_init(&io[i], generic_cb, fds[i][0], emask);
+        io[i].data = &data;
+        evio_poll_start(loop, &io[i]);
+        assert_int_equal(write(fds[i][1], "x", 1), 1);
+    }
+
+    evio_poll_update(loop);
+    assert_int_equal(loop->iou_count, 0);
+    int events_count = epoll_wait(loop->fd, events, EVIO_URING_EVENTS + 1, 0);
+    assert_int_equal(events_count, EVIO_URING_EVENTS + 1);
+
+    for (size_t i = 0; i < EVIO_URING_EVENTS + 1; ++i) {
+        int fd = (int)(events[i].data.u64 & UINT32_MAX);
+        size_t index = 0;
+        while (index < EVIO_URING_EVENTS + 1 && fds[index][0] != fd) {
+            ++index;
+        }
+        assert_true(index < EVIO_URING_EVENTS + 1);
+        assert_false(seen[index]);
+        seen[index] = true;
+
+        uint32_t emask = EPOLLIN;
+        if (index & 1) {
+            emask |= EPOLLOUT;
+        }
+        assert_int_equal(events[i].events, emask);
+        assert_int_equal(events[i].data.u64 >> 32, loop->fds.ptr[fd].gen);
+    }
+
+    for (size_t i = 0; i < EVIO_URING_EVENTS + 1; ++i) {
+        assert_true(seen[i]);
+        evio_poll_stop(loop, &io[i]);
+        close(fds[i][0]);
+        close(fds[i][1]);
+    }
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_poll_uring_spurious_event)
 {
     generic_cb_data data = { 0 };
