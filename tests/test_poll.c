@@ -1194,6 +1194,60 @@ TEST(test_evio_poll_error_and_stop)
     evio_loop_free(loop);
 }
 
+TEST(test_evio_poll_sparse_fd_growth)
+{
+    generic_cb_data data[3] = { { 0 }, { 0 }, { 0 } };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_poll io[3];
+    int fds[3][2] = { { -1, -1 }, { -1, -1 }, { -1, -1 } };
+    for (size_t i = 0; i < 3; ++i) {
+        assert_int_equal(pipe(fds[i]), 0);
+        evio_poll_init(&io[i], generic_cb, fds[i][0], EVIO_READ);
+        io[i].data = &data[i];
+    }
+
+    evio_poll_start(loop, &io[0]);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+
+    assert_true(loop->fds.total <= INT_MAX / 4);
+    int min_fd = (int)loop->fds.total * 4;
+    int high_fd = fcntl(fds[1][0], F_DUPFD_CLOEXEC, min_fd);
+    assert_true(high_fd >= min_fd);
+    close(fds[1][0]);
+    fds[1][0] = high_fd;
+    evio_poll_set(&io[1], high_fd, EVIO_READ);
+    evio_poll_start(loop, &io[1]);
+
+    assert_int_equal(write(fds[2][1], "x", 1), 1);
+    assert_int_equal(write(fds[0][1], "x", 1), 1);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data[0].called, 1);
+    assert_int_equal(data[1].called, 0);
+    assert_int_equal(data[2].called, 0);
+    char buf[1];
+    assert_int_equal(read(fds[0][0], buf, sizeof(buf)), 1);
+
+    assert_int_equal(write(fds[1][1], "x", 1), 1);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data[0].called, 1);
+    assert_int_equal(data[1].called, 1);
+    assert_int_equal(data[2].called, 0);
+    assert_int_equal(read(fds[1][0], buf, sizeof(buf)), 1);
+
+    evio_poll_start(loop, &io[2]);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    for (size_t i = 0; i < 3; ++i) {
+        assert_int_equal(data[i].called, 1);
+        assert_int_equal(data[i].emask, EVIO_POLL | EVIO_READ);
+        evio_poll_stop(loop, &io[i]);
+        close(fds[i][0]);
+        close(fds[i][1]);
+    }
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_poll_resizing_and_invalidation)
 {
     generic_cb_data data = { 0 };
