@@ -26,6 +26,7 @@ Checks: [
   '-readability-function-cognitive-complexity',
   '-readability-enum-initial-value',
   '-readability-identifier-length',
+  '-readability-implicit-bool-conversion',
   '-readability-magic-numbers',
   '-readability-suspicious-call-argument',
   '-readability-uppercase-literal-suffix',
