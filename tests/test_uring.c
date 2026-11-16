@@ -332,6 +332,38 @@ TEST(test_evio_loop_uring)
     evio_loop_free(loop);
 }
 
+TEST(test_evio_loop_uring_fallback)
+{
+    evio_uring_test_probe_reset();
+    evio_uring_test_probe_fail_setup_once(ENOSYS);
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    evio_uring_test_probe_reset();
+    assert_non_null(loop);
+    assert_null(loop->iou);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+    generic_cb_data data = { 0 };
+    evio_poll io;
+    evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
+    evio_poll_start(loop, &io);
+
+    assert_int_equal(write(fds[1], "x", 1), 1);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data.called, 1);
+    assert_int_equal(data.emask, EVIO_POLL | EVIO_READ);
+    assert_true(io.active);
+    char buf[1];
+    assert_int_equal(read(fds[0], buf, sizeof(buf)), 1);
+    assert_memory_equal(buf, "x", 1);
+
+    evio_poll_stop(loop, &io);
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_poll_uring)
 {
     generic_cb_data data = { 0 };

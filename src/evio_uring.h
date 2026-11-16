@@ -4,9 +4,9 @@
  * @file evio_uring.h
  * @brief Internal module for optional `io_uring` support.
  *
- * It abstracts the `io_uring` API to submit `epoll_ctl` operations
- * asynchronously, which can offer a significant performance benefit over
- * traditional syscalls on supported systems.
+ * Batches EPOLL_CTL_ADD and EPOLL_CTL_MOD operations. evio_uring_flush()
+ * submits queued operations and synchronously drains their completions.
+ * Readiness is still collected through epoll.
  */
 
 #include "evio.h"
