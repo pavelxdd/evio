@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # hadolint ignore=DL3007
 FROM rust:latest AS rust
-RUN cargo install --locked --git https://github.com/pavelxdd/cstyle --tag 1.1.4 --root /usr/local cstyle
+RUN cargo install --locked --git https://github.com/pavelxdd/cstyle --tag 1.2.2 --root /usr/local cstyle
 
 FROM debian:sid-slim AS debian
 WORKDIR /tmp
