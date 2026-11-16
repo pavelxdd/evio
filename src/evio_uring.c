@@ -393,41 +393,11 @@ static int evio_uring_probe_epoll_ctl(void)
     return result;
 }
 
-#ifndef EVIO_TESTING
-
-// GCOVR_EXCL_START
-static int evio_uring_probe_epoll_ctl_cached(void)
-{
-    static _Atomic int cached = -1;
-
-    int v = atomic_load_explicit(&cached, memory_order_acquire);
-    if (__evio_likely(v >= 0)) {
-        return v;
-    }
-
-    int probe = evio_uring_probe_epoll_ctl();
-    if (probe >= 0) {
-        atomic_store_explicit(&cached, probe ? 1 : 0, memory_order_release);
-        return probe;
-    }
-
-    return -1;
-}
-// GCOVR_EXCL_STOP
-
-#endif
-
 evio_uring *evio_uring_new(void)
 {
-#ifdef EVIO_TESTING
     if (__evio_unlikely(evio_uring_probe_epoll_ctl() != 1)) {
         return NULL;
     }
-#else // GCOVR_EXCL_START
-    if (__evio_unlikely(evio_uring_probe_epoll_ctl_cached() != 1)) {
-        return NULL;
-    }
-#endif // GCOVR_EXCL_STOP
 
     struct io_uring_params params = { 0 };
 
