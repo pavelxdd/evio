@@ -56,7 +56,7 @@ int evio_uring_setup(unsigned int entries,
  * @param flags Flags for the enter operation.
  * @param sig Signal mask.
  * @param sz Size of the signal mask.
- * @return 0 on success, or a negative error code.
+ * @return Number of SQEs consumed, or a negative value on error.
  */
 static inline __evio_nodiscard
 int evio_uring_enter(unsigned int fd,
@@ -101,15 +101,14 @@ static void evio_uring_submit_and_wait(evio_loop *loop)
             }
             EVIO_ABORT("io_uring_enter() failed, error %d: %s\n", err, EVIO_STRERROR(err));
         }
-        if (__evio_unlikely((uint32_t)ret != n)) {
+        if (__evio_unlikely((uint32_t)ret > n || (n && !ret))) {
             EVIO_ABORT("io_uring_enter() failed, result %d/%u\n", ret, n);
         }
         // GCOVR_EXCL_STOP
-        break;
+        iou->inflight += ret;
+        loop->iou_count -= ret;
+        return;
     }
-
-    iou->inflight += n;
-    loop->iou_count = 0;
 }
 
 void evio_uring_ctl(evio_loop *loop, int op, int fd, const struct epoll_event *ev)
