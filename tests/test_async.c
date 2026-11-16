@@ -45,9 +45,14 @@ TEST(test_evio_async)
     assert_int_equal(pthread_create(&thread, NULL, thread_func, &arg), 0);
 
     evio_run(loop, EVIO_RUN_ONCE);
+    assert_int_equal(data.called, 0);
+    assert_int_equal(evio_pending_count(loop), 1);
+
+    evio_run(loop, EVIO_RUN_NOWAIT);
 
     assert_int_equal(data.called, 1);
     assert_int_equal(data.emask, EVIO_ASYNC);
+    assert_int_equal(evio_pending_count(loop), 0);
 
     assert_int_equal(pthread_join(thread, NULL), 0);
 
@@ -244,9 +249,14 @@ TEST(test_evio_async_multi_send)
     // Both threads sent; only one triggers evio_eventfd_write.
     // We expect one callback.
     evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data.called, 0);
+    assert_int_equal(evio_pending_count(loop), 1);
+
+    evio_run(loop, EVIO_RUN_NOWAIT);
 
     assert_int_equal(data.called, 1);
     assert_int_equal(data.emask, EVIO_ASYNC);
+    assert_int_equal(evio_pending_count(loop), 0);
 
     evio_async_stop(loop, &async);
     evio_loop_free(loop);

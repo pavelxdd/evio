@@ -36,7 +36,7 @@ evio_time evio_clock_gettime(const evio_loop *loop)
  */
 static int evio_timeout(evio_loop *loop)
 {
-    if (!loop->refcount || loop->idle.count) {
+    if (!loop->refcount || loop->idle.count || evio_pending_count(loop)) {
         return 0;
     }
 
@@ -108,8 +108,13 @@ evio_loop *evio_loop_new(int flags)
 
 void evio_loop_free(evio_loop *loop)
 {
-    loop->pending[0].count = 0;
-    loop->pending[1].count = 0;
+    for (size_t i = 2; i--;) {
+        evio_pending_list *pending = &loop->pending[i];
+        for (size_t j = pending->count; j--;) {
+            pending->ptr[j].base->pending = 0;
+        }
+        pending->count = 0;
+    }
 
     if (loop->cleanup.count) {
         evio_queue_events(loop, loop->cleanup.ptr, loop->cleanup.count, EVIO_CLEANUP);
@@ -212,12 +217,12 @@ int evio_run(evio_loop *loop, int flags)
 
     flags &= EVIO_RUN_NOWAIT | EVIO_RUN_ONCE;
     loop->done = EVIO_BREAK_CANCEL;
-    evio_invoke_pending(loop);
+    evio_invoke_pending_once(loop);
 
     do {
         if (loop->prepare.count) {
             evio_queue_events(loop, loop->prepare.ptr, loop->prepare.count, EVIO_PREPARE);
-            evio_invoke_pending(loop);
+            evio_invoke_pending_once(loop);
         }
 
         if (__evio_unlikely(loop->done)) {
@@ -249,25 +254,21 @@ int evio_run(evio_loop *loop, int flags)
         loop->time = evio_clock_gettime(loop);
         evio_timer_update(loop);
 
-        if (loop->idle.count && !loop->pending[loop->pending_queue].count) {
+        if (loop->idle.count && !evio_pending_count(loop)) {
             evio_queue_events(loop, loop->idle.ptr, loop->idle.count, EVIO_IDLE);
         }
 
-        evio_invoke_pending(loop);
+        evio_invoke_pending_once(loop);
 
         if (loop->check.count) {
             evio_queue_events(loop, loop->check.ptr, loop->check.count, EVIO_CHECK);
-            evio_invoke_pending(loop);
+            evio_invoke_pending_once(loop);
         }
     } while (__evio_likely(
-                 loop->refcount &&
+                 (loop->refcount || evio_pending_count(loop)) &&
                  loop->done == EVIO_BREAK_CANCEL &&
                  flags == EVIO_RUN_DEFAULT
              ));
-
-    // GCOVR_EXCL_START
-    EVIO_ASSERT(loop->pending[loop->pending_queue].count == 0);
-    // GCOVR_EXCL_STOP
 
     if (loop->done == EVIO_BREAK_ALL) {
         return 0;
@@ -277,7 +278,7 @@ int evio_run(evio_loop *loop, int flags)
         loop->done = done;
     }
 
-    return loop->refcount;
+    return loop->refcount ? loop->refcount : evio_pending_count(loop) != 0;
 }
 
 void evio_break(evio_loop *loop, int state)

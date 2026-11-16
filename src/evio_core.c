@@ -155,29 +155,57 @@ void evio_feed_signal(evio_loop *loop, int signum)
     evio_signal_queue_events(loop, signum);
 }
 
-void evio_invoke_pending(evio_loop *loop)
+static void evio_invoke_pending_queue(evio_loop *loop, size_t queue, bool bounded)
 {
-    for (;;) {
-        const size_t queue = loop->pending_queue;
-        evio_pending_list *pending = &loop->pending[queue];
-        if (!pending->count) {
+    bool reentered = false;
+    bool *parent = loop->pending_reentered;
+    if (parent) {
+        *parent = true;
+    }
+    if (bounded) {
+        loop->pending_reentered = &reentered;
+    }
+
+    evio_pending_list *pending = &loop->pending[queue];
+    loop->pending_queue = queue ^ 1;
+    while (pending->count) {
+        const size_t index = --pending->count;
+        evio_pending *p = &pending->ptr[index];
+
+        EVIO_ASSERT(evio_pending_get_queue(p->base) == queue);
+        EVIO_ASSERT(evio_pending_get_index(p->base) == index);
+
+        p->base->pending = 0;
+        p->base->cb(loop, p->base, p->emask);
+
+        // A nested dispatch can redirect new events into this queue.
+        if (reentered) {
             break;
         }
+    }
+    loop->pending_reentered = parent;
+}
 
-        // Flip to the other queue.
-        // Any new events queued by callbacks will go here.
+void evio_invoke_pending_once(evio_loop *loop)
+{
+    size_t queue = loop->pending_queue;
+    if (!loop->pending[queue].count) {
+        queue ^= 1;
+    }
+    if (!loop->pending[queue].count) {
+        return;
+    }
+
+    evio_invoke_pending_queue(loop, queue, true);
+    if (!loop->pending[loop->pending_queue].count && evio_pending_count(loop)) {
         loop->pending_queue ^= 1;
+    }
+}
 
-        while (pending->count) {
-            const size_t index = --pending->count;
-            evio_pending *p = &pending->ptr[index];
-
-            EVIO_ASSERT(evio_pending_get_queue(p->base) == queue);
-            EVIO_ASSERT(evio_pending_get_index(p->base) == index);
-
-            p->base->pending = 0;
-            p->base->cb(loop, p->base, p->emask);
-        }
+void evio_invoke_pending(evio_loop *loop)
+{
+    while (loop->pending[loop->pending_queue].count) {
+        evio_invoke_pending_queue(loop, loop->pending_queue, false);
     }
 }
 

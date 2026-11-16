@@ -28,6 +28,7 @@ static void dummy_cb(evio_loop *loop, evio_base *base, evio_mask emask) {}
 // GCOVR_EXCL_STOP
 
 static _Atomic int evio_test_loop_timeout_hook;
+static _Atomic int evio_test_loop_observed_timeout;
 
 extern void evio_test_loop_after_timeout(evio_loop *loop, const int *timeout);
 
@@ -37,6 +38,7 @@ void evio_test_loop_after_timeout(evio_loop *loop, const int *timeout)
         return;
     }
 
+    atomic_store_explicit(&evio_test_loop_observed_timeout, *timeout, memory_order_relaxed);
     if (*timeout <= 0) {
         return;
     }
@@ -632,6 +634,361 @@ TEST(test_evio_run_default_looping)
     evio_loop_free(loop);
 }
 
+#define PENDING_CHAIN_LIMIT 64
+
+typedef struct {
+    evio_prepare *prepare;
+    evio_prepare *sibling;
+    size_t calls;
+    size_t before_yield;
+} pending_chain_data;
+
+static void pending_chain_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    pending_chain_data *data = base->data;
+    ++data->calls;
+    if (data->calls == 1 && data->sibling) {
+        evio_feed_event(loop, &data->sibling->base, EVIO_PREPARE);
+        evio_invoke_pending(loop);
+    }
+    if (data->calls < PENDING_CHAIN_LIMIT) {
+        evio_feed_event(loop, base, EVIO_PREPARE);
+    } else {
+        evio_prepare_stop(loop, data->prepare);
+    }
+}
+
+TEST(test_evio_invoke_pending_once)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, pending_chain_cb);
+    pending_chain_data data = { .prepare = &prepare };
+    prepare.data = &data;
+    evio_prepare_start(loop, &prepare);
+    evio_feed_event(loop, &prepare.base, EVIO_PREPARE);
+
+    evio_invoke_pending_once(loop);
+
+    assert_int_equal(data.calls, 1);
+    assert_int_equal(evio_pending_count(loop), 1);
+
+    evio_invoke_pending(loop);
+
+    assert_int_equal(data.calls, PENDING_CHAIN_LIMIT);
+    assert_int_equal(evio_pending_count(loop), 0);
+    evio_loop_free(loop);
+}
+
+typedef struct {
+    evio_prepare prepare;
+    generic_cb_data data;
+} pending_watcher_data;
+
+typedef struct {
+    evio_prepare nested;
+    pending_watcher_data cancelled;
+    pending_watcher_data requeued;
+    pending_watcher_data deferred;
+    pending_watcher_data *burst;
+    size_t count;
+    size_t queue;
+    size_t capacity;
+} nested_pending_data;
+
+static void nested_pending_fill_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    nested_pending_data *data = base->data;
+    assert_int_equal(loop->pending_queue, data->queue);
+    evio_clear_pending(loop, &data->cancelled.prepare.base);
+    evio_clear_pending(loop, &data->requeued.prepare.base);
+    evio_queue_event(loop, &data->requeued.prepare.base, EVIO_PREPARE);
+    for (size_t i = 0; i < data->count; ++i) {
+        evio_queue_event(loop, &data->burst[i].prepare.base, EVIO_PREPARE);
+    }
+    assert_true(loop->pending[data->queue].total > data->capacity);
+}
+
+static void nested_pending_check_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    nested_pending_data *data = base->data;
+    evio_check_stop(loop, container_of(base, evio_check, base));
+    evio_queue_event(loop, &data->deferred.prepare.base, EVIO_PREPARE);
+}
+
+static void nested_pending_run_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    nested_pending_data *data = base->data;
+    evio_queue_event(loop, &data->nested.base, EVIO_PREPARE);
+    int active = evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_not_equal(active, 0);
+    evio_break(loop, EVIO_BREAK_ONE);
+}
+
+TEST(test_evio_run_nested_pending_growth)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+    nested_pending_data data = { 0 };
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, nested_pending_run_cb);
+    prepare.data = &data;
+    evio_prepare_init(&data.nested, nested_pending_fill_cb);
+    data.nested.data = &data;
+    evio_prepare_init(&data.cancelled.prepare, generic_cb);
+    data.cancelled.prepare.data = &data.cancelled.data;
+    evio_prepare_init(&data.requeued.prepare, generic_cb);
+    data.requeued.prepare.data = &data.requeued.data;
+    evio_prepare_init(&data.deferred.prepare, generic_cb);
+    data.deferred.prepare.data = &data.deferred.data;
+    evio_check check;
+    evio_check_init(&check, nested_pending_check_cb);
+    check.data = &data;
+    evio_check_start(loop, &check);
+    evio_queue_event(loop, &data.cancelled.prepare.base, EVIO_PREPARE);
+    evio_queue_event(loop, &data.requeued.prepare.base, EVIO_PREPARE | EVIO_ERROR);
+    evio_queue_event(loop, &prepare.base, EVIO_PREPARE);
+    data.queue = loop->pending_queue;
+    data.capacity = loop->pending[data.queue].total;
+    data.count = data.capacity + 1;
+    data.burst = evio_calloc(data.count, sizeof(*data.burst));
+    for (size_t i = 0; i < data.count; ++i) {
+        evio_prepare_init(&data.burst[i].prepare, generic_cb);
+        data.burst[i].prepare.data = &data.burst[i].data;
+    }
+
+    int active = evio_run(loop, EVIO_RUN_NOWAIT);
+
+    assert_int_not_equal(active, 0);
+    assert_int_equal(data.deferred.data.called, 0);
+    assert_true(data.deferred.prepare.base.pending);
+    assert_int_equal(evio_pending_count(loop), 1);
+    assert_int_equal(evio_refcount(loop), 0);
+    assert_null(loop->pending_reentered);
+
+    active = evio_run(loop, EVIO_RUN_NOWAIT);
+
+    assert_int_equal(active, 0);
+    assert_int_equal(data.cancelled.data.called, 0);
+    assert_int_equal(data.requeued.data.called, 1);
+    assert_int_equal(data.requeued.data.emask, EVIO_PREPARE);
+    assert_int_equal(data.deferred.data.called, 1);
+    assert_int_equal(data.deferred.data.emask, EVIO_PREPARE);
+    for (size_t i = 0; i < data.count; ++i) {
+        assert_int_equal(data.burst[i].data.called, 1);
+        assert_int_equal(data.burst[i].data.emask, EVIO_PREPARE);
+    }
+    assert_int_equal(evio_pending_count(loop), 0);
+    evio_loop_free(loop);
+    evio_free(data.burst);
+}
+
+static void pending_chain_timer_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    pending_chain_data *data = base->data;
+    data->before_yield = data->calls;
+    evio_prepare_stop(loop, data->prepare);
+    if (data->sibling) {
+        evio_prepare_stop(loop, data->sibling);
+    }
+}
+
+TEST(test_evio_run_pending_yields_to_timer)
+{
+    for (size_t reenter = 0; reenter < 2; ++reenter) {
+        evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+        assert_non_null(loop);
+        evio_prepare prepare, sibling;
+        evio_prepare_init(&prepare, pending_chain_cb);
+        evio_prepare_init(&sibling, dummy_cb);
+        pending_chain_data data = { .prepare = &prepare, .sibling = reenter ? &sibling : NULL };
+        prepare.data = &data;
+        evio_prepare_start(loop, &prepare);
+        if (reenter) {
+            evio_prepare_start(loop, &sibling);
+        }
+        evio_timer timer;
+        evio_timer_init(&timer, pending_chain_timer_cb, 0);
+        timer.data = &data;
+        evio_timer_start(loop, &timer, 0);
+        evio_feed_event(loop, &prepare.base, EVIO_PREPARE);
+
+        evio_run(loop, EVIO_RUN_DEFAULT);
+
+        assert_true(data.before_yield > 0);
+        assert_true(data.before_yield < PENDING_CHAIN_LIMIT);
+        assert_int_equal(data.calls, data.before_yield);
+        assert_int_equal(evio_pending_count(loop), 0);
+        assert_int_equal(evio_refcount(loop), 0);
+        evio_loop_free(loop);
+    }
+}
+
+static void pending_chain_check_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    pending_chain_data *data = base->data;
+    data->before_yield = data->calls;
+    evio_prepare_stop(loop, data->prepare);
+    evio_check_stop(loop, container_of(base, evio_check, base));
+}
+
+TEST(test_evio_run_pending_yields_to_check)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+    evio_eventfd_init(loop);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, pending_chain_cb);
+    pending_chain_data data = { .prepare = &prepare };
+    prepare.data = &data;
+    evio_prepare_start(loop, &prepare);
+    evio_check check;
+    evio_check_init(&check, pending_chain_check_cb);
+    check.data = &data;
+    evio_check_start(loop, &check);
+    atomic_store_explicit(&evio_test_loop_timeout_hook, 1, memory_order_release);
+
+    evio_run(loop, EVIO_RUN_DEFAULT);
+
+    atomic_store_explicit(&evio_test_loop_timeout_hook, 0, memory_order_release);
+    assert_true(data.before_yield > 0);
+    assert_true(data.before_yield < PENDING_CHAIN_LIMIT);
+    assert_int_equal(data.calls, data.before_yield);
+    assert_int_equal(evio_pending_count(loop), 0);
+    assert_int_equal(evio_refcount(loop), 0);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_run_pending_does_not_block)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+    evio_eventfd_init(loop);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, pending_chain_cb);
+    pending_chain_data data = { .prepare = &prepare };
+    prepare.data = &data;
+    evio_prepare_start(loop, &prepare);
+    evio_feed_event(loop, &prepare.base, EVIO_PREPARE);
+    evio_timer timer;
+    evio_timer_init(&timer, generic_cb, 0);
+    generic_cb_data timer_data = {0};
+    timer.data = &timer_data;
+    evio_timer_start(loop, &timer, EVIO_TIME_FROM_SEC(3600));
+    atomic_store_explicit(&evio_test_loop_observed_timeout, -2, memory_order_relaxed);
+    atomic_store_explicit(&evio_test_loop_timeout_hook, 1, memory_order_release);
+
+    int active = evio_run(loop, EVIO_RUN_ONCE);
+
+    atomic_store_explicit(&evio_test_loop_timeout_hook, 0, memory_order_release);
+    assert_int_not_equal(active, 0);
+    assert_int_equal(atomic_load_explicit(&evio_test_loop_observed_timeout, memory_order_relaxed), 0);
+    assert_true(data.calls < PENDING_CHAIN_LIMIT);
+    assert_int_equal(timer_data.called, 0);
+    assert_int_equal(evio_pending_count(loop), 1);
+    evio_prepare_stop(loop, &prepare);
+    evio_timer_stop(loop, &timer);
+    evio_loop_free(loop);
+}
+
+static void unreferenced_pending_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    size_t *calls = base->data;
+    if (++*calls < PENDING_CHAIN_LIMIT) {
+        evio_queue_event(loop, base, EVIO_PREPARE);
+    }
+}
+
+TEST(test_evio_run_unreferenced_pending)
+{
+    const int flags[] = { EVIO_RUN_ONCE, EVIO_RUN_NOWAIT };
+    for (size_t i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i) {
+        evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+        assert_non_null(loop);
+        evio_prepare prepare;
+        evio_prepare_init(&prepare, unreferenced_pending_cb);
+        size_t calls = 0;
+        prepare.data = &calls;
+        evio_queue_event(loop, &prepare.base, EVIO_PREPARE);
+
+        int active = evio_run(loop, flags[i]);
+
+        assert_int_not_equal(active, 0);
+        assert_true(calls > 0);
+        assert_true(calls < PENDING_CHAIN_LIMIT);
+        assert_int_equal(evio_refcount(loop), 0);
+        assert_int_equal(evio_pending_count(loop), 1);
+        assert_int_equal(evio_run(loop, EVIO_RUN_DEFAULT), 0);
+        assert_int_equal(calls, PENDING_CHAIN_LIMIT);
+        assert_int_equal(evio_pending_count(loop), 0);
+        evio_loop_free(loop);
+    }
+}
+
+static void break_all_and_pending_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    size_t *calls = base->data;
+    if (++*calls == 1) {
+        evio_feed_event(loop, base, EVIO_PREPARE);
+        evio_break(loop, EVIO_BREAK_ALL);
+    }
+}
+
+TEST(test_evio_run_break_all_preserves_pending)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, break_all_and_pending_cb);
+    size_t calls = 0;
+    prepare.data = &calls;
+    evio_prepare_start(loop, &prepare);
+
+    assert_int_equal(evio_run(loop, EVIO_RUN_DEFAULT), 0);
+    assert_int_equal(calls, 1);
+    assert_int_equal(evio_pending_count(loop), 1);
+    assert_int_equal(evio_run(loop, EVIO_RUN_NOWAIT), 0);
+    assert_int_equal(calls, 1);
+    assert_int_equal(evio_pending_count(loop), 1);
+    evio_break(loop, EVIO_BREAK_CANCEL);
+    assert_int_not_equal(evio_run(loop, EVIO_RUN_NOWAIT), 0);
+    assert_true(calls > 1);
+    assert_int_equal(evio_pending_count(loop), 0);
+    evio_prepare_stop(loop, &prepare);
+    evio_loop_free(loop);
+}
+
+static void cleanup_pending_prepare_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    evio_prepare *prepare = base->data;
+    evio_prepare_stop(loop, prepare);
+}
+
+TEST(test_evio_loop_free_clears_pending_before_cleanup)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+    evio_prepare prepare;
+    evio_prepare_init(&prepare, break_all_and_pending_cb);
+    size_t calls = 0;
+    prepare.data = &calls;
+    evio_prepare_start(loop, &prepare);
+    evio_cleanup cleanup;
+    evio_cleanup_init(&cleanup, cleanup_pending_prepare_cb);
+    cleanup.data = &prepare;
+    evio_cleanup_start(loop, &cleanup);
+
+    assert_int_equal(evio_run(loop, EVIO_RUN_DEFAULT), 0);
+    assert_int_equal(calls, 1);
+    assert_int_equal(evio_pending_count(loop), 1);
+    evio_loop_free(loop);
+
+    assert_int_equal(calls, 1);
+    assert_false(prepare.base.pending);
+    assert_false(prepare.base.active);
+}
+
 static void pending_and_no_ref_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
     size_t *counter = base->data;
@@ -665,21 +1022,13 @@ TEST(test_evio_run_return_pending)
     size_t counter = 0;
     prepare.data = &counter;
 
-    // evio_run will call the callback. The callback stops the watcher, queues
-    // another event, and breaks. The draining invoke_pending will immediately
-    // process the second event.
     int active = evio_run(loop, EVIO_RUN_DEFAULT);
 
-    // After evio_run, the watcher is stopped (refcount=0) and the pending
-    // queue is empty. So active is false.
-    assert_false(active);
-    // The callback is called twice: once for the initial event, and a second
-    // time for the event queued within the callback itself.
-    assert_int_equal(counter, 2);
+    assert_true(active);
+    assert_int_equal(counter, 1);
     assert_int_equal(evio_refcount(loop), 0);
-    assert_int_equal(evio_pending_count(loop), 0);
+    assert_int_equal(evio_pending_count(loop), 1);
 
-    // Call again with empty pending queue.
     evio_invoke_pending(loop);
     assert_int_equal(counter, 2);
     assert_int_equal(evio_pending_count(loop), 0);
@@ -713,20 +1062,13 @@ TEST(test_evio_run_return_ref_and_pending)
     size_t counter = 0;
     prepare.data = &counter;
 
-    // The callback will be called once. It queues another event for itself
-    // and then breaks. The draining invoke_pending will immediately process
-    // the second event.
     int active = evio_run(loop, EVIO_RUN_DEFAULT);
 
-    // The watcher is still active, so the return value is true.
     assert_true(active);
-    // The callback is called twice. The first call queues a second event, which
-    // is processed immediately by the same evio_invoke_pending() call.
-    assert_int_equal(counter, 2);
+    assert_int_equal(counter, 1);
     assert_int_equal(evio_refcount(loop), 1);
-    assert_int_equal(evio_pending_count(loop), 0);
+    assert_int_equal(evio_pending_count(loop), 1);
 
-    // Call again.
     evio_invoke_pending(loop);
     assert_int_equal(counter, 2);
 

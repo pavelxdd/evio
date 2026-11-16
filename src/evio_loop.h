@@ -101,11 +101,16 @@ clockid_t evio_get_clockid(const evio_loop *loop);
 
 /**
  * @brief Runs the event loop.
- * @details Returns 0 if `refcount == 0` or stopped via `EVIO_BREAK_ALL`.
+ * @details Each automatic pending dispatch processes at most one generation;
+ * callbacks queued during delivery are deferred to a later dispatch.
+ * Pending callbacks keep the loop runnable without active watchers.
+ * Limited runs and break requests may return with callbacks still pending.
+ * Their watchers must remain valid until delivery or cancellation.
  *
  * @param loop The event loop to run.
  * @param flags Flags to control execution (e.g., `EVIO_RUN_ONCE`).
- * @return 0 if there are no active watchers, non-zero otherwise.
+ * @return 0 if stopped via `EVIO_BREAK_ALL` or no active watchers or pending
+ * callbacks remain, non-zero otherwise.
  */
 __evio_public __evio_nonnull(1) __evio_hot
 int evio_run(evio_loop *loop, int flags);
@@ -113,7 +118,8 @@ int evio_run(evio_loop *loop, int flags);
 /**
  * @brief Requests the event loop to stop running.
  * @details `EVIO_BREAK_ONE` returns from the current `evio_run`. `EVIO_BREAK_ALL`
- * returns from the current and all nested `evio_run` calls.
+ * returns from the current and all nested `evio_run` calls and remains in effect
+ * until cleared with `EVIO_BREAK_CANCEL`.
  * @param loop The event loop to stop.
  * @param state The break state (`EVIO_BREAK_ONE` or `EVIO_BREAK_ALL`).
  */
@@ -129,7 +135,7 @@ __evio_public __evio_nonnull(1) __evio_nodiscard
 int evio_break_state(const evio_loop *loop);
 
 /**
- * @brief Queues an event for a watcher to be processed in the current iteration.
+ * @brief Queues an event for a watcher for a later pending dispatch.
  * @param loop The event loop.
  * @param base The watcher to feed the event to.
  * @param emask The event mask to deliver.

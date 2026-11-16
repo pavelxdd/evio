@@ -173,7 +173,7 @@ enum evio_loop_flags {
 
 /** @brief Flags for `evio_run` to control loop execution. */
 enum evio_run_flags {
-    EVIO_RUN_DEFAULT    = 0, /**< Run until stopped or no active watchers remain. */
+    EVIO_RUN_DEFAULT    = 0, /**< Run until stopped or no active watchers or pending callbacks remain. */
     EVIO_RUN_NOWAIT     = 1, /**< Run one iteration, but do not block for I/O. */
     EVIO_RUN_ONCE       = 2, /**< Run one iteration and block for I/O if needed. */
 };

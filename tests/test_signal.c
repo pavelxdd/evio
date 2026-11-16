@@ -163,6 +163,7 @@ TEST(test_evio_signal_concurrent_raise)
     // The other will only have set its own status.
     // Loop processes both.
     evio_run(loop, EVIO_RUN_ONCE);
+    evio_invoke_pending(loop);
 
     pthread_barrier_destroy(&barrier);
 
@@ -199,11 +200,13 @@ TEST(test_evio_signal_process_pending_race)
     raise(SIGUSR2);
 
     evio_run(loop2, EVIO_RUN_ONCE);
+    evio_invoke_pending(loop2);
 
     assert_int_equal(data2.called, 1);
     assert_int_equal(data1.called, 0);
 
     evio_run(loop1, EVIO_RUN_ONCE);
+    evio_invoke_pending(loop1);
     assert_int_equal(data1.called, 1);
 
     evio_loop_free(loop1);
@@ -293,6 +296,7 @@ TEST(test_evio_signal_process_pending_stale_status)
     // It will hit the `atomic_exchange_explicit(&sig->status.value, 0, ...)`
     // but the inner `for` loop will not run because `sig->list.count` is 0 for loop1.
     evio_run(loop1, EVIO_RUN_ONCE);
+    evio_invoke_pending(loop1);
 
     // No callback was called, as the event was for a stale watcher.
     assert_int_equal(data.called, 0);
@@ -327,6 +331,7 @@ TEST(test_evio_signal_pending_another_signal)
     raise(SIGUSR1);
 
     evio_run(loop, EVIO_RUN_ONCE);
+    evio_invoke_pending(loop);
 
     assert_int_equal(data1.called, 1);
     assert_int_equal(data2.called, 0);
@@ -338,24 +343,32 @@ TEST(test_evio_signal_pending_another_signal)
 
 TEST(test_evio_signal_real_signal)
 {
-    generic_cb_data data = { 0 };
-    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
-    assert_non_null(loop);
+    const int flags[] = { EVIO_RUN_ONCE, EVIO_RUN_NOWAIT };
+    for (size_t i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i) {
+        generic_cb_data data = { 0 };
+        evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+        assert_non_null(loop);
 
-    evio_signal sig;
-    evio_signal_init(&sig, generic_cb, SIGUSR1);
-    sig.data = &data;
-    evio_signal_start(loop, &sig);
+        evio_signal sig;
+        evio_signal_init(&sig, generic_cb, SIGUSR1);
+        sig.data = &data;
+        evio_signal_start(loop, &sig);
 
-    raise(SIGUSR1);
+        raise(SIGUSR1);
 
-    evio_run(loop, EVIO_RUN_ONCE);
+        evio_run(loop, flags[i]);
+        assert_int_equal(data.called, 0);
+        assert_int_equal(evio_pending_count(loop), 1);
 
-    assert_int_equal(data.called, 1);
-    assert_int_equal(data.emask, EVIO_SIGNAL);
+        evio_run(loop, EVIO_RUN_NOWAIT);
 
-    evio_signal_stop(loop, &sig);
-    evio_loop_free(loop);
+        assert_int_equal(data.called, 1);
+        assert_int_equal(data.emask, EVIO_SIGNAL);
+        assert_int_equal(evio_pending_count(loop), 0);
+
+        evio_signal_stop(loop, &sig);
+        evio_loop_free(loop);
+    }
 }
 
 TEST(test_evio_signal_multiple_loops)
@@ -417,6 +430,7 @@ TEST(test_evio_signal_process_pending_skip)
 
     // loop1 processes SIGUSR1; SIGUSR2 belongs to loop2.
     evio_run(loop1, EVIO_RUN_ONCE);
+    evio_invoke_pending(loop1);
     assert_int_equal(data1.called, 1);
     assert_int_equal(data2.called, 0);
 
@@ -424,6 +438,7 @@ TEST(test_evio_signal_process_pending_skip)
     raise(SIGUSR2);
 
     evio_run(loop2, EVIO_RUN_ONCE);
+    evio_invoke_pending(loop2);
     assert_int_equal(data1.called, 1);
     assert_int_equal(data2.called, 1);
 
@@ -597,6 +612,7 @@ TEST(test_evio_signal_stale_status_after_stop)
     // Run the loop - if status was not cleared, the callback would be called
     // even though no new signal was raised.
     evio_run(loop, EVIO_RUN_NOWAIT);
+    evio_invoke_pending(loop);
 
     // No callback was called because the signal was "consumed"
     // by the stop, and no new signal was raised after restart.
@@ -605,6 +621,7 @@ TEST(test_evio_signal_stale_status_after_stop)
     // Raise a new signal and verify it works
     raise(SIGUSR1);
     evio_run(loop, EVIO_RUN_ONCE);
+    evio_invoke_pending(loop);
     assert_int_equal(data.called, 1);
 
     evio_signal_stop(loop, &sig);

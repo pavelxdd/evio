@@ -82,7 +82,8 @@ struct evio_loop {
     int done;                   /**< The loop's break state (see `EVIO_BREAK_*`). */
     int pending_queue;          /**< The index of the active pending queue (0 or 1). */
     clockid_t clock_id;         /**< The monotonic clock source ID for time functions. */
-    size_t refcount;            /**< Active watcher reference count. Loop runs if > 0. */
+    size_t refcount;            /**< Active watcher reference count. */
+    bool *pending_reentered;    /**< Stack-owned flag for a bounded pending dispatch. */
     evio_time time;             /**< Cached monotonic time for the current iteration. */
 
     evio_pending_list pending[2];   /**< Double-buffered queue for pending watcher callbacks. */
@@ -185,6 +186,9 @@ void evio_queue_event(evio_loop *loop, evio_base *base, evio_mask emask)
     p->base = base;
     p->emask = emask;
 }
+
+__evio_nonnull(1) __evio_hot
+void evio_invoke_pending_once(evio_loop *loop);
 
 /**
  * @brief Queues the same event for multiple watchers.
