@@ -1391,6 +1391,56 @@ TEST(test_evio_poll_stale_event_gen_mismatch)
     evio_loop_free(loop);
 }
 
+TEST(test_evio_poll_stale_generation_same_mask)
+{
+    generic_cb_data data1 = { 0 };
+    generic_cb_data data2 = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+
+    evio_poll io1;
+    evio_poll_init(&io1, generic_cb, fds[0], EVIO_READ);
+    io1.data = &data1;
+    evio_poll_start(loop, &io1);
+    evio_poll_update(loop);
+    uint32_t old_gen = loop->fds.ptr[fds[0]].gen;
+    evio_poll_stop(loop, &io1);
+
+    evio_poll io2;
+    evio_poll_init(&io2, generic_cb, fds[0], EVIO_READ);
+    io2.data = &data2;
+    evio_poll_start(loop, &io2);
+    evio_poll_update(loop);
+    assert_int_not_equal(loop->fds.ptr[fds[0]].gen, old_gen);
+
+    struct epoll_event ev = { .events = EPOLLIN };
+    ev.data.u64 = ((uint64_t)fds[0]) | ((uint64_t)old_gen << 32);
+    assert_int_equal(epoll_ctl(loop->fd, EPOLL_CTL_MOD, fds[0], &ev), 0);
+    assert_int_equal(write(fds[1], "x", 1), 1);
+    evio_poll_wait(loop, 0);
+    assert_int_equal(evio_pending_count(loop), 0);
+    evio_invoke_pending(loop);
+    assert_int_equal(data1.called, 0);
+    assert_int_equal(data2.called, 0);
+
+    evio_poll_stop(loop, &io2);
+    evio_poll_start(loop, &io2);
+    evio_poll_update(loop);
+    evio_poll_wait(loop, 0);
+    evio_invoke_pending(loop);
+    assert_int_equal(data1.called, 0);
+    assert_int_equal(data2.called, 1);
+    assert_int_equal(data2.emask, EVIO_POLL | EVIO_READ);
+
+    evio_poll_stop(loop, &io2);
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_poll_event_with_pending_change)
 {
     generic_cb_data data = { 0 };
@@ -1474,6 +1524,35 @@ TEST(test_evio_poll_update_ebadf)
     // evio_queue_fd_errors stops the watcher and queues an error event.
     assert_int_equal(counter, 1);
     assert_false(io.active);
+
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_poll_stop_inactive_pending_error)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+
+    evio_poll *io = evio_malloc(sizeof(*io));
+    evio_poll_init(io, generic_cb, fds[0], EVIO_READ);
+    io->data = &data;
+    close(fds[0]);
+    evio_poll_start(loop, io);
+    evio_poll_update(loop);
+    assert_false(io->active);
+    assert_int_equal(evio_pending_count(loop), 1);
+    assert_int_equal(data.called, 0);
+
+    evio_poll_stop(loop, io);
+    assert_int_equal(evio_pending_count(loop), 0);
+    evio_free(io);
+    evio_invoke_pending(loop);
+    assert_int_equal(data.called, 0);
 
     close(fds[1]);
     evio_loop_free(loop);
@@ -1673,6 +1752,103 @@ TEST(test_evio_poll_enoent_add_fail)
     assert_false(io.active);
 
     close(fds[1]);
+    evio_loop_free(loop);
+}
+
+typedef struct {
+    evio_poll *watchers[3];
+    size_t called[3];
+    size_t victim;
+    int source_fd;
+    evio_poll replacement;
+    generic_cb_data replacement_data;
+} poll_replace_data;
+
+static void replace_pending_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    poll_replace_data *data = base->data;
+    evio_poll *self = container_of(base, evio_poll, base);
+    assert_int_equal(emask, EVIO_POLL | EVIO_READ);
+
+    size_t index = 0;
+    while (index < 3 && data->watchers[index] != self) {
+        ++index;
+    }
+    assert_true(index < 3);
+    ++data->called[index];
+    if (data->victim < 3) {
+        return;
+    }
+
+    data->victim = index == 0 ? 1 : 0;
+    evio_poll *other = data->watchers[data->victim];
+    assert_true(other->pending);
+    int fd = other->fd;
+    evio_poll_stop(loop, other);
+    evio_free(other);
+    data->watchers[data->victim] = NULL;
+    assert_int_equal(close(fd), 0);
+    assert_int_equal(dup2(data->source_fd, fd), fd);
+
+    evio_poll_init(&data->replacement, generic_cb, fd, EVIO_READ);
+    data->replacement.data = &data->replacement_data;
+    evio_poll_start(loop, &data->replacement);
+}
+
+TEST(test_evio_poll_stop_free_and_reuse_pending)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+    poll_replace_data data = { .victim = 3 };
+    int fds[3][2] = { { -1, -1 }, { -1, -1 }, { -1, -1 } };
+    int replacement[2] = { -1, -1 };
+    assert_int_equal(pipe(replacement), 0);
+    data.source_fd = replacement[0];
+    assert_int_equal(pipe(fds[0]), 0);
+    assert_int_equal(pipe(fds[1]), 0);
+    assert_int_equal(pipe(fds[2]), 0);
+
+    for (size_t i = 0; i < 3; ++i) {
+        data.watchers[i] = evio_malloc(sizeof(*data.watchers[i]));
+        evio_poll_init(data.watchers[i], replace_pending_cb, fds[i][0], EVIO_READ);
+        data.watchers[i]->data = &data;
+        evio_poll_start(loop, data.watchers[i]);
+    }
+    evio_poll_update(loop);
+    for (size_t i = 0; i < 3; ++i) {
+        assert_int_equal(write(fds[i][1], "x", 1), 1);
+    }
+    evio_poll_wait(loop, 0);
+    assert_int_equal(evio_pending_count(loop), 3);
+    evio_invoke_pending(loop);
+    assert_true(data.victim < 3);
+    assert_int_equal(evio_pending_count(loop), 0);
+    assert_int_equal(data.replacement_data.called, 0);
+
+    for (size_t i = 0; i < 3; ++i) {
+        assert_int_equal(data.called[i], i == data.victim ? 0 : 1);
+        if (data.watchers[i]) {
+            evio_poll_stop(loop, data.watchers[i]);
+            evio_free(data.watchers[i]);
+            close(fds[i][0]);
+        }
+        close(fds[i][1]);
+    }
+    evio_poll_update(loop);
+    evio_poll_wait(loop, 0);
+    evio_invoke_pending(loop);
+    assert_int_equal(data.replacement_data.called, 0);
+
+    assert_int_equal(write(replacement[1], "y", 1), 1);
+    evio_poll_wait(loop, 0);
+    evio_invoke_pending(loop);
+    assert_int_equal(data.replacement_data.called, 1);
+    assert_int_equal(data.replacement_data.emask, EVIO_POLL | EVIO_READ);
+
+    evio_poll_stop(loop, &data.replacement);
+    close(fds[data.victim][0]);
+    close(replacement[0]);
+    close(replacement[1]);
     evio_loop_free(loop);
 }
 
