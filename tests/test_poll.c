@@ -208,6 +208,88 @@ TEST(test_evio_poll_change)
     evio_loop_free(loop);
 }
 
+TEST(test_evio_poll_change_noop_preserves_pending)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+
+    evio_poll io;
+    evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
+    evio_poll_start(loop, &io);
+    evio_poll_update(loop);
+    uint32_t gen = loop->fds.ptr[fds[0]].gen;
+
+    assert_int_equal(write(fds[1], "x", 1), 1);
+    evio_poll_wait(loop, 0);
+    assert_int_equal(evio_pending_count(loop), 1);
+    assert_int_equal(data.called, 0);
+
+    evio_poll_change(loop, &io, fds[0], EVIO_READ);
+    assert_int_equal(loop->fdchanges.count, 0);
+    assert_int_equal(evio_pending_count(loop), 1);
+    evio_poll_update(loop);
+    assert_int_equal(loop->fds.ptr[fds[0]].gen, gen);
+    evio_invoke_pending(loop);
+    assert_int_equal(data.called, 1);
+    assert_int_equal(data.emask, EVIO_POLL | EVIO_READ);
+
+    evio_poll_stop(loop, &io);
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_poll_change_coalesces_shared_fd)
+{
+    generic_cb_data data1 = { 0 };
+    generic_cb_data data2 = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+
+    evio_poll io1;
+    evio_poll_init(&io1, generic_cb, fds[0], EVIO_READ);
+    io1.data = &data1;
+    evio_poll_start(loop, &io1);
+    evio_poll io2;
+    evio_poll_init(&io2, generic_cb, fds[0], EVIO_READ);
+    io2.data = &data2;
+    evio_poll_start(loop, &io2);
+    evio_poll_update(loop);
+    uint32_t gen = loop->fds.ptr[fds[0]].gen;
+    assert_int_equal(loop->fds.ptr[fds[0]].emask, EVIO_READ);
+
+    evio_poll_change(loop, &io1, fds[0], EVIO_WRITE);
+    evio_poll_change(loop, &io1, fds[0], EVIO_READ);
+    evio_poll_change(loop, &io1, fds[0], EVIO_WRITE);
+    assert_int_equal(loop->fdchanges.count, 1);
+    evio_poll_update(loop);
+    assert_int_equal(loop->fdchanges.count, 0);
+    assert_int_equal(loop->fds.ptr[fds[0]].emask, EVIO_READ | EVIO_WRITE);
+    assert_int_equal(loop->fds.ptr[fds[0]].gen, gen + 1);
+
+    assert_int_equal(write(fds[1], "x", 1), 1);
+    evio_poll_wait(loop, 0);
+    evio_invoke_pending(loop);
+    assert_int_equal(data1.called, 1);
+    assert_int_equal(data1.emask, EVIO_POLL | EVIO_WRITE);
+    assert_int_equal(data2.called, 1);
+    assert_int_equal(data2.emask, EVIO_POLL | EVIO_READ);
+
+    evio_poll_stop(loop, &io1);
+    evio_poll_stop(loop, &io2);
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_poll_change_stop)
 {
     generic_cb_data data = { 0 };
@@ -851,6 +933,7 @@ TEST(test_evio_poll_update_no_change)
     evio_poll_start(loop, &io1);
     evio_poll_start(loop, &io2);
     evio_run(loop, EVIO_RUN_NOWAIT); // Process ADD.
+    uint32_t gen = loop->fds.ptr[fds[0]].gen;
 
     // Stop one watcher. This queues a change, but the resulting event mask
     // for the fd is the same (still EVIO_READ).
@@ -859,6 +942,9 @@ TEST(test_evio_poll_update_no_change)
     // Run the loop. poll_update hits the
     // optimization branch and do nothing.
     evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(loop->fdchanges.count, 0);
+    assert_int_equal(loop->fds.ptr[fds[0]].emask, EVIO_READ);
+    assert_int_equal(loop->fds.ptr[fds[0]].gen, gen);
 
     // Remaining watcher works.
     assert_int_equal(write(fds[1], "x", 1), 1);
