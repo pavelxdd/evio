@@ -13,7 +13,7 @@ typedef struct evio_timer {
     // Callback order is unspecified for timers with equal deadlines.
     // Repeating timers are rearmed before callbacks at cached loop time + repeat.
     // Changing repeat alone leaves the next deadline unchanged.
-    // Overflow stops the timer without canceling its ready event.
+    // Automatic rearm overflow stops the timer but preserves its ready event.
     evio_time repeat; /**< The repeat interval in nanoseconds. If 0, the timer is one-shot. */
 } evio_timer;
 
@@ -65,6 +65,7 @@ void evio_timer_stop(evio_loop *loop, evio_timer *w);
  * @param loop The event loop.
  * @param w The timer watcher to restart.
  */
+// Overflow stops the timer and cancels any pending event.
 __evio_public __evio_nonnull(1, 2)
 void evio_timer_again(evio_loop *loop, evio_timer *w);
 

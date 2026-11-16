@@ -103,6 +103,44 @@ TEST(test_evio_clock_gettime_fail)
     evio_loop_free(loop);
 }
 
+TEST(test_evio_timeout_rounding_and_clamp)
+{
+    const struct {
+        evio_time after;
+        int timeout;
+    } cases[] = {
+        { .after = 1, .timeout = 1 },
+        { .after = EVIO_TIME_PER_MSEC - 1, .timeout = 1 },
+        { .after = EVIO_TIME_PER_MSEC, .timeout = 1 },
+        { .after = EVIO_TIME_PER_MSEC + 1, .timeout = 2 },
+        { .after = EVIO_TIME_FROM_MSEC(INT_MAX - 1), .timeout = INT_MAX - 1 },
+        { .after = EVIO_TIME_FROM_MSEC(INT_MAX), .timeout = INT_MAX },
+        { .after = EVIO_TIME_FROM_MSEC(INT_MAX) + 1, .timeout = INT_MAX },
+        { .after = EVIO_TIME_FROM_MSEC(EVIO_TIME_C(INT_MAX) + 1), .timeout = INT_MAX },
+        { .after = EVIO_TIME_MAX, .timeout = INT_MAX },
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+        assert_non_null(loop);
+        evio_eventfd_init(loop);
+        loop->time = 0;
+        evio_timer timer;
+        evio_timer_init(&timer, dummy_cb, 0);
+        evio_timer_start(loop, &timer, cases[i].after);
+        atomic_store_explicit(&evio_test_loop_observed_timeout, -2, memory_order_relaxed);
+        atomic_store_explicit(&evio_test_loop_timeout_hook, 1, memory_order_release);
+
+        evio_run(loop, EVIO_RUN_ONCE);
+
+        atomic_store_explicit(&evio_test_loop_timeout_hook, 0, memory_order_release);
+        int timeout = atomic_load_explicit(&evio_test_loop_observed_timeout, memory_order_relaxed);
+        evio_timer_stop(loop, &timer);
+        evio_loop_free(loop);
+
+        assert_int_equal(timeout, cases[i].timeout);
+    }
+}
+
 TEST(test_evio_run_timeout_pending_branch)
 {
     generic_cb_data data = { 0 };

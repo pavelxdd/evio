@@ -1106,6 +1106,73 @@ TEST(test_evio_timer_equal_deadlines)
     }
 }
 
+TEST(test_evio_timer_again_pending_overflow)
+{
+    const evio_time repeats[] = { 0, 10 };
+    for (size_t i = 0; i < sizeof(repeats) / sizeof(repeats[0]); ++i) {
+        evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+        assert_non_null(loop);
+        loop->time = 0;
+        generic_cb_data data = { 0 };
+        evio_timer timer;
+        evio_timer_init(&timer, generic_cb, repeats[i]);
+        timer.data = &data;
+        evio_timer_start(loop, &timer, 0);
+        evio_timer_update(loop);
+        assert_int_equal(evio_pending_count(loop), 1);
+        assert_int_equal(timer.active != 0, repeats[i] != 0);
+        assert_int_equal(data.called, 0);
+
+        evio_timer_set(&timer, 10);
+        loop->time = EVIO_TIME_MAX - 9;
+        evio_timer_again(loop, &timer);
+        assert_false(timer.active);
+        assert_false(timer.pending);
+        assert_int_equal(timer.repeat, 10);
+        assert_int_equal(loop->timer.count, 0);
+        assert_int_equal(evio_pending_count(loop), 0);
+        assert_int_equal(evio_refcount(loop), 0);
+        evio_timer_update(loop);
+        evio_invoke_pending(loop);
+        assert_int_equal(data.called, 0);
+        evio_loop_free(loop);
+    }
+}
+
+TEST(test_evio_timer_start_boundary)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+    loop->time = EVIO_TIME_MAX - 10;
+    generic_cb_data data = { 0 };
+    evio_timer timer;
+    evio_timer_init(&timer, generic_cb, 0);
+    timer.data = &data;
+    evio_timer_start(loop, &timer, 10);
+    assert_true(timer.active);
+    assert_int_equal(evio_timer_remaining(loop, &timer), 10);
+    assert_int_equal(evio_refcount(loop), 1);
+
+    loop->time = EVIO_TIME_MAX;
+    evio_timer_update(loop);
+    assert_int_equal(evio_pending_count(loop), 1);
+    evio_invoke_pending(loop);
+    assert_int_equal(data.called, 1);
+    assert_int_equal(data.emask, EVIO_TIMER);
+    assert_false(timer.active);
+    assert_int_equal(evio_refcount(loop), 0);
+
+    evio_timer_start(loop, &timer, 1);
+    assert_false(timer.active);
+    assert_int_equal(loop->timer.count, 0);
+    assert_int_equal(evio_refcount(loop), 0);
+    evio_timer_update(loop);
+    evio_invoke_pending(loop);
+    assert_int_equal(evio_pending_count(loop), 0);
+    assert_int_equal(data.called, 1);
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_timer_start_overflow)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
