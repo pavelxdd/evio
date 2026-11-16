@@ -216,6 +216,7 @@ int evio_run(evio_loop *loop, int flags)
     }
 
     flags &= EVIO_RUN_NOWAIT | EVIO_RUN_ONCE;
+    bool once_pending = (flags & EVIO_RUN_ONCE) && evio_pending_count(loop);
     loop->done = EVIO_BREAK_CANCEL;
     evio_invoke_pending_once(loop);
 
@@ -233,7 +234,7 @@ int evio_run(evio_loop *loop, int flags)
 
         atomic_store_explicit(&loop->eventfd_allow.value, 1, memory_order_release);
 
-        int timeout = (flags & EVIO_RUN_NOWAIT) ? 0 : evio_timeout(loop);
+        int timeout = ((flags & EVIO_RUN_NOWAIT) || once_pending) ? 0 : evio_timeout(loop);
 
 #ifdef EVIO_TESTING
         evio_test_loop_after_timeout(loop, &timeout);

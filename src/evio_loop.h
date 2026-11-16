@@ -103,6 +103,7 @@ clockid_t evio_get_clockid(const evio_loop *loop);
  * @brief Runs the event loop.
  * @details Each automatic pending dispatch processes at most one generation;
  * callbacks queued during delivery are deferred to a later dispatch.
+ * EVIO_RUN_ONCE does not block if callbacks are pending at entry.
  * Pending callbacks keep the loop runnable without active watchers.
  * Limited runs and break requests may return with callbacks still pending.
  * Their watchers must remain valid until delivery or cancellation.

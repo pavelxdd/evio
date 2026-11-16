@@ -39,14 +39,14 @@ void evio_test_loop_after_timeout(evio_loop *loop, const int *timeout)
     }
 
     atomic_store_explicit(&evio_test_loop_observed_timeout, *timeout, memory_order_relaxed);
-    if (*timeout <= 0) {
+    if (*timeout == 0) {
         return;
     }
 
     evio_eventfd_write(loop);
 }
 
-TEST(test_evio_test_loop_after_timeout_timeout_nonpositive)
+TEST(test_evio_test_loop_after_timeout_timeout_zero)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
@@ -118,11 +118,13 @@ TEST(test_evio_run_timeout_pending_branch)
     tm.data = &data;
     evio_timer_start(loop, &tm, EVIO_TIME_FROM_MSEC(1000));
 
+    atomic_store_explicit(&evio_test_loop_observed_timeout, -2, memory_order_relaxed);
     atomic_store_explicit(&evio_test_loop_timeout_hook, 1, memory_order_release);
     evio_run(loop, EVIO_RUN_ONCE);
     atomic_store_explicit(&evio_test_loop_timeout_hook, 0, memory_order_release);
 
     assert_int_equal(data.called, 0);
+    assert_true(atomic_load_explicit(&evio_test_loop_observed_timeout, memory_order_relaxed) > 0);
 
     evio_timer_stop(loop, &tm);
     evio_loop_free(loop);
@@ -890,6 +892,102 @@ TEST(test_evio_run_pending_does_not_block)
     evio_prepare_stop(loop, &prepare);
     evio_timer_stop(loop, &timer);
     evio_loop_free(loop);
+}
+
+TEST(test_evio_run_pending_wait_policy)
+{
+    const int flags[] = { EVIO_RUN_ONCE, EVIO_RUN_NOWAIT, EVIO_RUN_DEFAULT };
+    for (size_t i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i) {
+        for (int with_timer = 0; with_timer < 2; ++with_timer) {
+            evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+            assert_non_null(loop);
+            generic_cb_data async_data = { 0 };
+            evio_async async;
+            evio_async_init(&async, generic_cb);
+            async.data = &async_data;
+            evio_async_start(loop, &async);
+            evio_async_send(loop, &async);
+            evio_run(loop, EVIO_RUN_NOWAIT);
+            assert_int_equal(async_data.called, 0);
+            assert_int_equal(evio_pending_count(loop), 1);
+            generic_cb_data timer_data = { 0 };
+            evio_timer timer;
+            evio_timer_init(&timer, generic_cb, 0);
+            timer.data = &timer_data;
+            if (with_timer) {
+                evio_timer_start(loop, &timer, EVIO_TIME_FROM_SEC(3600));
+            }
+            size_t check_called = 0;
+            evio_check check;
+            evio_check_init(&check, break_one_cb);
+            check.data = &check_called;
+            evio_check_start(loop, &check);
+            atomic_store_explicit(&evio_test_loop_observed_timeout, -2, memory_order_relaxed);
+            atomic_store_explicit(&evio_test_loop_timeout_hook, 1, memory_order_release);
+
+            int active = evio_run(loop, flags[i]);
+
+            atomic_store_explicit(&evio_test_loop_timeout_hook, 0, memory_order_release);
+            int timeout = atomic_load_explicit(&evio_test_loop_observed_timeout, memory_order_relaxed);
+            size_t pending = evio_pending_count(loop);
+            evio_check_stop(loop, &check);
+            evio_timer_stop(loop, &timer);
+            evio_async_stop(loop, &async);
+            evio_loop_free(loop);
+
+            assert_int_not_equal(active, 0);
+            if (flags[i] != EVIO_RUN_DEFAULT) {
+                assert_int_equal(timeout, 0);
+            } else if (with_timer) {
+                assert_true(timeout > 0);
+            } else {
+                assert_int_equal(timeout, -1);
+            }
+            assert_int_equal(async_data.called, 1);
+            assert_int_equal(async_data.emask, EVIO_ASYNC);
+            assert_int_equal(timer_data.called, 0);
+            assert_int_equal(check_called, 1);
+            assert_int_equal(pending, 0);
+        }
+    }
+}
+
+TEST(test_evio_run_prepare_can_block)
+{
+    const int flags[] = { EVIO_RUN_ONCE, EVIO_RUN_DEFAULT };
+    for (size_t i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i) {
+        evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+        assert_non_null(loop);
+        evio_eventfd_init(loop);
+        generic_cb_data data = { 0 };
+        evio_prepare prepare;
+        evio_prepare_init(&prepare, generic_cb);
+        prepare.data = &data;
+        evio_prepare_start(loop, &prepare);
+        size_t check_called = 0;
+        evio_check check;
+        evio_check_init(&check, break_one_cb);
+        check.data = &check_called;
+        evio_check_start(loop, &check);
+        atomic_store_explicit(&evio_test_loop_observed_timeout, -2, memory_order_relaxed);
+        atomic_store_explicit(&evio_test_loop_timeout_hook, 1, memory_order_release);
+
+        int active = evio_run(loop, flags[i]);
+
+        atomic_store_explicit(&evio_test_loop_timeout_hook, 0, memory_order_release);
+        int timeout = atomic_load_explicit(&evio_test_loop_observed_timeout, memory_order_relaxed);
+        size_t pending = evio_pending_count(loop);
+        evio_check_stop(loop, &check);
+        evio_prepare_stop(loop, &prepare);
+        evio_loop_free(loop);
+
+        assert_int_not_equal(active, 0);
+        assert_int_equal(timeout, -1);
+        assert_int_equal(data.called, 1);
+        assert_int_equal(data.emask, EVIO_PREPARE);
+        assert_int_equal(check_called, 1);
+        assert_int_equal(pending, 0);
+    }
 }
 
 static void unreferenced_pending_cb(evio_loop *loop, evio_base *base, evio_mask emask)
