@@ -263,34 +263,6 @@ static int evio_uring_probe_epoll_ctl(void)
 
     EVIO_URING_PROBE_TWEAK_PARAMS(&params);
 
-#ifdef IORING_REGISTER_PROBE
-    if (__evio_likely(!EVIO_URING_PROBE_DISABLE_REGISTER_PROBE())) {
-        unsigned int ops_len = 256;
-#ifdef IORING_OP_LAST
-        ops_len = (unsigned int)IORING_OP_LAST;
-#endif
-        size_t bytes = sizeof(struct io_uring_probe) +
-                       ops_len * sizeof(struct io_uring_probe_op);
-        struct io_uring_probe *probe = __builtin_alloca(bytes);
-        memset(probe, 0, bytes);
-        probe->ops_len = ops_len;
-
-        int ret = EVIO_URING_REGISTER(fd, IORING_REGISTER_PROBE, probe, ops_len);
-        if (ret == 0) {
-            for (unsigned int i = 0; i < probe->ops_len; ++i) {
-                const struct io_uring_probe_op *op = &probe->ops[i];
-                if (op->op == IORING_OP_EPOLL_CTL) {
-                    close(fd);
-                    return (op->flags & 1u) ? 1 : 0;
-                }
-            }
-
-            close(fd);
-            return 0;
-        }
-    }
-#endif
-
     size_t sqlen = params.sq_off.array + (params.sq_entries * sizeof(uint32_t));
     size_t cqlen = params.cq_off.cqes + (params.cq_entries * sizeof(struct io_uring_cqe));
     size_t sqelen = params.sq_entries * sizeof(struct io_uring_sqe);

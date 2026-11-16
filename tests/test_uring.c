@@ -24,9 +24,6 @@ static struct {
     bool setup_fail;
     int setup_err;
 
-    bool register_fail;
-    int register_err;
-
     bool epoll_fail;
     int epoll_err;
 
@@ -40,8 +37,6 @@ static struct {
     int enter_err;
 
     bool force_cq_empty;
-
-    bool disable_register_probe;
 
     bool cqe_res_active;
     int cqe_res;
@@ -90,12 +85,6 @@ void evio_uring_test_probe_fail_setup_once(int err)
     evio_uring_probe_injection.setup_err = err;
 }
 
-void evio_uring_test_probe_fail_register_once(int err)
-{
-    evio_uring_probe_injection.register_fail = true;
-    evio_uring_probe_injection.register_err = err;
-}
-
 void evio_uring_test_probe_fail_epoll_create_once(int err)
 {
     evio_uring_probe_injection.epoll_fail = true;
@@ -123,11 +112,6 @@ void evio_uring_test_probe_enter_ret_once(int ret, int err)
 void evio_uring_test_probe_force_cq_empty(bool force)
 {
     evio_uring_probe_injection.force_cq_empty = force;
-}
-
-void evio_uring_test_probe_disable_register_probe(bool disable)
-{
-    evio_uring_probe_injection.disable_register_probe = disable;
 }
 
 void evio_uring_test_probe_force_cqe_res_once(int res)
@@ -205,19 +189,6 @@ int evio_test_uring_enter(unsigned int fd,
     }
 
     return (int)syscall(SYS_io_uring_enter, fd, to_submit, min_complete, flags, sig, sz);
-}
-
-int evio_test_uring_register(unsigned int fd, unsigned int opcode,
-                             const void *arg, unsigned int nr_args)
-{
-    if (evio_uring_probe_injection.register_fail) {
-        evio_uring_probe_injection.register_fail = false;
-        errno = evio_uring_probe_injection.register_err ?
-                evio_uring_probe_injection.register_err : EPERM;
-        return -1;
-    }
-
-    return (int)syscall(SYS_io_uring_register, fd, opcode, arg, nr_args);
 }
 
 void *evio_test_uring_mmap(void *addr, size_t length, int prot,
@@ -300,11 +271,6 @@ bool evio_test_uring_cqe_res_override(int fd, int op, int *res)
     }
 
     return false;
-}
-
-bool evio_test_uring_probe_disable_register_probe(void)
-{
-    return evio_uring_probe_injection.disable_register_probe;
 }
 
 typedef struct {
@@ -1246,6 +1212,44 @@ static bool evio_test_uring_supported(void)
     return true;
 }
 
+TEST(test_evio_loop_uring_fallback_enter_eperm)
+{
+    // GCOVR_EXCL_START
+    if (!evio_test_uring_supported()) {
+        TEST_SKIPF("io_uring unavailable");
+    }
+    // GCOVR_EXCL_STOP
+
+    evio_uring_test_probe_reset();
+    evio_uring_test_probe_enter_ret_once(-1, EPERM);
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    evio_uring_test_probe_reset();
+    assert_non_null(loop);
+    assert_null(loop->iou);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+    generic_cb_data data = { 0 };
+    evio_poll io;
+    evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
+    evio_poll_start(loop, &io);
+
+    assert_int_equal(write(fds[1], "x", 1), 1);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data.called, 1);
+    assert_int_equal(data.emask, EVIO_POLL | EVIO_READ);
+    assert_true(io.active);
+    char buf[1];
+    assert_int_equal(read(fds[0], buf, sizeof(buf)), 1);
+    assert_memory_equal(buf, "x", 1);
+
+    evio_poll_stop(loop, &io);
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_uring_probe_fail_single_mmap)
 {
     // GCOVR_EXCL_START
@@ -1516,63 +1520,6 @@ TEST(test_evio_uring_probe_empty_cq)
     evio_uring_test_probe_enter_ret_once(1, 0);
     evio_uring_test_probe_force_cq_empty(true);
     assert_null(evio_uring_new());
-}
-
-TEST(test_evio_uring_probe_fallback_without_register_probe)
-{
-#ifndef IORING_REGISTER_PROBE
-    TEST_SKIP();
-#else
-    // GCOVR_EXCL_START
-    if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel");
-    }
-    // GCOVR_EXCL_STOP
-
-    evio_uring_test_probe_reset();
-    evio_uring_test_probe_disable_register_probe(true);
-
-    evio_uring *iou = evio_uring_new();
-    assert_non_null(iou);
-    evio_uring_free(iou);
-#endif
-}
-
-TEST(test_evio_uring_probe_fallback_on_register_fail)
-{
-    // GCOVR_EXCL_START
-    if (!evio_test_uring_supported()) {
-        TEST_SKIPF("io_uring unsupported by kernel");
-    }
-    // GCOVR_EXCL_STOP
-
-    evio_uring_test_probe_reset();
-    evio_uring_test_probe_fail_register_once(EPERM);
-
-    evio_uring *iou = evio_uring_new();
-    assert_non_null(iou);
-    evio_uring_free(iou);
-}
-
-TEST(test_evio_uring_test_register_wrapper)
-{
-    evio_uring_test_probe_reset();
-    evio_uring_test_probe_fail_register_once(EPERM);
-    assert_int_equal(evio_test_uring_register(0, 0, NULL, 0), -1);
-
-    (void)evio_test_uring_register(0, 0, NULL, 0);
-}
-
-TEST(test_evio_uring_test_disable_register_probe_flag)
-{
-    evio_uring_test_probe_reset();
-    assert_false(evio_test_uring_probe_disable_register_probe());
-
-    evio_uring_test_probe_disable_register_probe(true);
-    assert_true(evio_test_uring_probe_disable_register_probe());
-
-    evio_uring_test_probe_disable_register_probe(false);
-    assert_false(evio_test_uring_probe_disable_register_probe());
 }
 
 TEST(test_evio_uring_probe_force_einval)
