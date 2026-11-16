@@ -4,6 +4,10 @@
  * @file evio_poll.h
  * @brief An I/O watcher for monitoring file descriptor readiness.
  * @details epoll-backed. EPERM on add/mod => treated as "always ready".
+ *
+ * EPOLLERR and EPOLLHUP report the requested read/write readiness. They do not
+ * stop the watcher or set EVIO_ERROR; EOF and I/O errors are determined by the
+ * operation on the fd. EPOLLPRI and EPOLLRDHUP are not exposed separately.
  */
 
 #include "evio.h"

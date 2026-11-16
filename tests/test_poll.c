@@ -2109,6 +2109,126 @@ TEST(test_evio_poll_stop_restart)
     evio_loop_free(loop);
 }
 
+TEST(test_evio_poll_hup_preserves_readable_data)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+
+    evio_poll io;
+    evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
+    evio_poll_start(loop, &io);
+    evio_poll_update(loop);
+
+    assert_int_equal(write(fds[1], "abc", 3), 3);
+    assert_int_equal(close(fds[1]), 0);
+    struct epoll_event ev;
+    assert_int_equal(epoll_wait(loop->fd, &ev, 1, 0), 1);
+    assert_true(ev.events & EPOLLHUP);
+
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data.called, 1);
+    assert_int_equal(data.emask, EVIO_POLL | EVIO_READ);
+    assert_true(io.active);
+    char buf[2];
+    assert_int_equal(read(fds[0], buf, sizeof(buf)), 2);
+    assert_memory_equal(buf, "ab", 2);
+
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data.called, 2);
+    assert_int_equal(data.emask, EVIO_POLL | EVIO_READ);
+    assert_true(io.active);
+    assert_int_equal(read(fds[0], buf, sizeof(buf)), 1);
+    assert_memory_equal(buf, "c", 1);
+
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data.called, 3);
+    assert_int_equal(data.emask, EVIO_POLL | EVIO_READ);
+    assert_true(io.active);
+    assert_int_equal(read(fds[0], buf, sizeof(buf)), 0);
+
+    evio_poll_stop(loop, &io);
+    close(fds[0]);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_poll_error_keeps_write_watcher_active)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(pipe(fds), 0);
+
+    evio_poll io;
+    evio_poll_init(&io, generic_cb, fds[1], EVIO_WRITE);
+    io.data = &data;
+    evio_poll_start(loop, &io);
+    evio_poll_update(loop);
+
+    assert_int_equal(close(fds[0]), 0);
+    struct epoll_event ev;
+    assert_int_equal(epoll_wait(loop->fd, &ev, 1, 0), 1);
+    assert_true(ev.events & EPOLLERR);
+
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data.called, 1);
+    assert_int_equal(data.emask, EVIO_POLL | EVIO_WRITE);
+    assert_true(io.active);
+
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data.called, 2);
+    assert_int_equal(data.emask, EVIO_POLL | EVIO_WRITE);
+    assert_true(io.active);
+
+    evio_poll_stop(loop, &io);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_poll_half_close_preserves_write)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    int fds[2] = { -1, -1 };
+    assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
+
+    evio_poll io;
+    evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
+    io.data = &data;
+    evio_poll_start(loop, &io);
+    evio_poll_update(loop);
+
+    assert_int_equal(shutdown(fds[1], SHUT_WR), 0);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data.called, 1);
+    assert_int_equal(data.emask, EVIO_POLL | EVIO_READ);
+    assert_true(io.active);
+    char buf[1];
+    assert_int_equal(read(fds[0], buf, sizeof(buf)), 0);
+
+    evio_poll_change(loop, &io, fds[0], EVIO_WRITE);
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(data.called, 2);
+    assert_int_equal(data.emask, EVIO_POLL | EVIO_WRITE);
+    assert_true(io.active);
+    assert_int_equal(send(fds[0], "x", 1, MSG_NOSIGNAL), 1);
+    assert_int_equal(read(fds[1], buf, sizeof(buf)), 1);
+    assert_memory_equal(buf, "x", 1);
+
+    evio_poll_stop(loop, &io);
+    close(fds[0]);
+    close(fds[1]);
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_poll_stop_before_hup)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
