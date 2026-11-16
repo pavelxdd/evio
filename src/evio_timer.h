@@ -10,6 +10,7 @@
 /** @brief A timer watcher for scheduling time-based events. */
 typedef struct evio_timer {
     EVIO_BASE;
+    // Callback order is unspecified for timers with equal deadlines.
     // Repeating timers are rearmed before callbacks at cached loop time + repeat.
     // Changing repeat alone leaves the next deadline unchanged.
     // Overflow stops the timer without canceling its ready event.

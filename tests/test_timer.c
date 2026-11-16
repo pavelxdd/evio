@@ -1065,6 +1065,47 @@ TEST(test_evio_timer_repeat_overflow_after_delay)
     }
 }
 
+TEST(test_evio_timer_equal_deadlines)
+{
+    enum { TIMER_COUNT = 17 };
+    const evio_time repeats[] = { 0, 10 };
+    for (size_t i = 0; i < sizeof(repeats) / sizeof(repeats[0]); ++i) {
+        evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+        assert_non_null(loop);
+        loop->time = 0;
+        evio_timer timers[TIMER_COUNT];
+        generic_cb_data data[TIMER_COUNT] = { 0 };
+        for (size_t j = 0; j < TIMER_COUNT; ++j) {
+            evio_timer_init(&timers[j], generic_cb, repeats[i]);
+            timers[j].data = &data[j];
+            evio_timer_start(loop, &timers[j], 10);
+        }
+
+        for (size_t round = 1; round <= 2; ++round) {
+            loop->time += 10;
+            evio_timer_update(loop);
+            assert_int_equal(evio_pending_count(loop),
+                             repeats[i] || round == 1 ? TIMER_COUNT : 0);
+            evio_invoke_pending(loop);
+            assert_int_equal(evio_pending_count(loop), 0);
+            assert_int_equal(evio_refcount(loop), repeats[i] ? TIMER_COUNT : 0);
+            for (size_t j = 0; j < TIMER_COUNT; ++j) {
+                assert_int_equal(data[j].called, repeats[i] ? round : 1);
+                assert_int_equal(data[j].emask, EVIO_TIMER);
+                assert_false(timers[j].pending);
+                assert_int_equal(timers[j].active != 0, repeats[i] != 0);
+            }
+        }
+
+        for (size_t j = 0; j < TIMER_COUNT; ++j) {
+            evio_timer_stop(loop, &timers[j]);
+        }
+        assert_int_equal(loop->timer.count, 0);
+        assert_int_equal(evio_refcount(loop), 0);
+        evio_loop_free(loop);
+    }
+}
+
 TEST(test_evio_timer_start_overflow)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
