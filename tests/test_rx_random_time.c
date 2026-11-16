@@ -268,8 +268,8 @@ static void check_run(timed_sub *sub, int error)
             assert_int_equal(model.error, error);
         }
     }
-    for (size_t i = 0; i < sub->out.count; ++i) {
-        assert_int_equal(sub->out.items[i], expected.items[i]);
+    if (sub->out.count) {
+        assert_memory_equal(sub->out.items, expected.items, sub->out.count * sizeof(*sub->out.items));
     }
     list_free(&expected);
 }

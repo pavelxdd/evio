@@ -1137,7 +1137,7 @@ TEST(test_evio_rx_poll_real_pipe_and_socketpair_readiness)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     for (size_t i = 0; i < 2; ++i) {
-        int fds[2];
+        int fds[2] = { -1, -1 };
         if (i) {
             assert_int_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, fds), 0);
         } else {
@@ -1179,7 +1179,7 @@ TEST(test_evio_rx_poll_real_pipe_and_socketpair_readiness)
 TEST(test_evio_rx_poll_multiple_subscriptions_do_not_consume_bytes)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
-    int fds[2];
+    int fds[2] = { -1, -1 };
     assert_int_equal(pipe(fds), 0);
     assert_int_equal(write(fds[1], "x", 1), 1);
     evio_rx_observable *source = evio_rx_from_poll(fds[0], EVIO_READ);
@@ -1220,8 +1220,8 @@ TEST(test_evio_rx_poll_multiple_subscriptions_do_not_consume_bytes)
 TEST(test_evio_rx_poll_pending_cancel_and_fd_reuse)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
-    int fds[2];
-    int replacement[2];
+    int fds[2] = { -1, -1 };
+    int replacement[2] = { -1, -1 };
     assert_int_equal(pipe(fds), 0);
     assert_int_equal(pipe(replacement), 0);
     int fd = fds[0];
@@ -1264,7 +1264,7 @@ TEST(test_evio_rx_poll_pending_cancel_and_fd_reuse)
 TEST(test_evio_rx_poll_error_is_eio_and_does_not_close_fd)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
-    int fds[2];
+    int fds[2] = { -1, -1 };
     assert_int_equal(pipe(fds), 0);
     evio_rx_observable *source = evio_rx_from_poll(fds[0], EVIO_READ);
     poll_log log = { .fd = fds[0] };
@@ -1293,7 +1293,7 @@ TEST(test_evio_rx_poll_closed_fd_and_invalid_configuration)
     assert_null(evio_rx_from_poll(0, EVIO_ERROR));
     assert_int_equal(errno, EINVAL);
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
-    int fds[2];
+    int fds[2] = { -1, -1 };
     assert_int_equal(pipe(fds), 0);
     close(fds[0]);
     evio_rx_observable *source = evio_rx_from_poll(fds[0], EVIO_READ);
