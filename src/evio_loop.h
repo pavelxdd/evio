@@ -15,6 +15,7 @@
  * @param flags Flags to customize loop creation (e.g., `EVIO_FLAG_URING`).
  * @return A new event loop instance, or NULL on failure.
  */
+// Defaults to CLOCK_MONOTONIC_COARSE at <= 1 ms resolution, else CLOCK_MONOTONIC.
 __evio_public __evio_nodiscard
 evio_loop *evio_loop_new(int flags);
 
@@ -31,6 +32,7 @@ void evio_loop_free(evio_loop *loop);
  * @param loop The event loop.
  * @return The cached time in nanoseconds.
  */
+// Nanosecond units do not imply nanosecond clock resolution.
 __evio_public __evio_nonnull(1) __evio_nodiscard
 evio_time evio_get_time(const evio_loop *loop);
 
@@ -88,6 +90,8 @@ void *evio_get_userdata(const evio_loop *loop);
  * @param loop The event loop.
  * @param clock_id The new `clockid_t` to use (e.g., `CLOCK_MONOTONIC`).
  */
+// Select a monotonic clock before starting timers or retaining timestamps.
+// Updates the cache immediately; existing deadlines and timestamps are not rebased.
 __evio_public __evio_nonnull(1)
 void evio_set_clockid(evio_loop *loop, clockid_t clock_id);
 
