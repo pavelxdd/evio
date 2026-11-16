@@ -114,7 +114,7 @@ clockid_t evio_get_clockid(const evio_loop *loop);
  *
  * @param loop The event loop to run.
  * @param flags Flags to control execution (e.g., `EVIO_RUN_ONCE`).
- * @return 0 if stopped via `EVIO_BREAK_ALL` or no active watchers or pending
+ * @return 0 if stopped via `EVIO_BREAK_ALL` or no loop references or pending
  * callbacks remain, non-zero otherwise.
  */
 __evio_public __evio_nonnull(1) __evio_hot

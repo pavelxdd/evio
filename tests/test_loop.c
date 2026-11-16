@@ -1574,6 +1574,61 @@ TEST(test_evio_fork_safety)
 }
 // GCOVR_EXCL_STOP
 
+static void break_reentered_prepare_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    size_t *calls = base->data;
+    ++*calls;
+    if (*calls > 1) {
+        evio_break(loop, EVIO_BREAK_ONE);
+    }
+}
+
+TEST(test_evio_run_internal_eventfd_does_not_keep_alive)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+    evio_async async;
+    evio_async_init(&async, dummy_cb);
+    evio_async_start(loop, &async);
+    evio_async_stop(loop, &async);
+    assert_true(loop->event.active);
+    assert_int_equal(evio_refcount(loop), 0);
+
+    size_t calls = 0;
+    evio_prepare guard;
+    evio_prepare_init(&guard, break_reentered_prepare_cb);
+    guard.data = &calls;
+    evio_prepare_start(loop, &guard);
+    evio_unref(loop);
+    assert_int_equal(evio_refcount(loop), 0);
+
+    int active = evio_run(loop, EVIO_RUN_DEFAULT);
+
+    evio_ref(loop);
+    evio_prepare_stop(loop, &guard);
+    evio_loop_free(loop);
+
+    assert_int_equal(active, 0);
+    assert_true(calls <= 1);
+}
+
+TEST(test_evio_run_explicit_reference)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    evio_ref(loop);
+    int active = evio_run(loop, EVIO_RUN_NOWAIT);
+    int active_again = evio_run(loop, EVIO_RUN_NOWAIT);
+    evio_unref(loop);
+    int inactive = evio_run(loop, EVIO_RUN_NOWAIT);
+    evio_loop_free(loop);
+
+    assert_int_not_equal(active, 0);
+    assert_int_not_equal(active_again, 0);
+    assert_int_equal(inactive, 0);
+}
+
 TEST(test_evio_run_return_value_contract)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
