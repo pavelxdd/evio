@@ -216,6 +216,8 @@ if get_option('tests')
         'tests/test_rx_combine.c',
         'tests/test_rx_time.c',
         'tests/test_rx_flatten.c',
+        'tests/test_rx_random.c',
+        'tests/test_rx_random_time.c',
     )
 
     if io_uring_hdr
