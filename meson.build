@@ -279,6 +279,15 @@ if get_option('examples')
         'cleanup',
         'once',
         'fork',
+        'rx',
+        'rx_sources',
+        'rx_producer',
+        'rx_subject',
+        'rx_values',
+        'rx_combine',
+        'rx_time',
+        'rx_flatten',
+        'rx_restart',
     ]
 
     examples_target = []
