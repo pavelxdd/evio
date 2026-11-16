@@ -122,6 +122,15 @@ evio_sources = files(
     'src/evio_cleanup.c',
     'src/evio_once.c',
     'src/evio_eventfd.c',
+    'src/evio_rx.c',
+    'src/evio_rx_node.c',
+    'src/evio_rx_buffer.c',
+    'src/evio_rx_source.c',
+    'src/evio_rx_ops.c',
+    'src/evio_rx_subject.c',
+    'src/evio_rx_time.c',
+    'src/evio_rx_combine.c',
+    'src/evio_rx_flatten.c',
 )
 
 io_uring_hdr = cc.has_header('linux/io_uring.h')
@@ -146,6 +155,13 @@ evio_headers = files(
     'src/evio_check.h',
     'src/evio_cleanup.h',
     'src/evio_once.h',
+    'src/evio_rx.h',
+    'src/evio_rx_source.h',
+    'src/evio_rx_subject.h',
+    'src/evio_rx_ops.h',
+    'src/evio_rx_combine.h',
+    'src/evio_rx_time.h',
+    'src/evio_rx_flatten.h',
 )
 
 libevio = library('evio', evio_sources,
@@ -193,6 +209,13 @@ if get_option('tests')
         'tests/test_cleanup.c',
         'tests/test_once.c',
         'tests/test_eventfd.c',
+        'tests/test_rx_core.c',
+        'tests/test_rx_sources.c',
+        'tests/test_rx_subject.c',
+        'tests/test_rx_ops.c',
+        'tests/test_rx_combine.c',
+        'tests/test_rx_time.c',
+        'tests/test_rx_flatten.c',
     )
 
     if io_uring_hdr

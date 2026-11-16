@@ -107,6 +107,19 @@ int main(void)
 }
 ```
 
+## Experimental Rx API
+
+Reactive streams on top of the loop: sources, operators, Subjects and timers.
+Include `<evio/evio_rx.h>` explicitly; `<evio/evio.h>` does not include it.
+
+- Observable descriptions are reusable; each subscription has its own state.
+- Values are borrowed during `next`; `evio_rx_type` copy/destroy defines retention.
+- Queue capacities are explicit; overflow fails the run with `EOVERFLOW`.
+- All Rx calls belong to the loop thread.
+
+The contracts are documented in `src/evio_rx*.h`. `just examples` builds the
+`example-rx*` programs, one scenario each.
+
 ## Notes
 
 - Linux-only (`epoll`, `eventfd`).
