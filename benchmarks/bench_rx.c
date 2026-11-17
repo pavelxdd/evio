@@ -1,4 +1,8 @@
+#include <inttypes.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
 
 #include "evio.h"
 #include "evio_rx.h"
@@ -216,6 +220,26 @@ static void threshold_next(void *ctx, const void *value)
     ++*count;
 }
 
+static evio_rx_subscription *subscribe_threshold(evio_loop *loop, evio_rx_subject *subject,
+                                                 size_t *count)
+{
+    evio_rx_observable *source = evio_rx_from_subject(subject);
+    evio_rx_observable *mapped = evio_rx_map(source, &bool_type, above_threshold,
+                                             (evio_rx_capture) {0});
+    evio_rx_observable *changes = evio_rx_distinct_until_changed(mapped, same_state,
+                                                                 (evio_rx_capture) {0});
+    evio_rx_observer observer = { .next = threshold_next, .ctx = count };
+    evio_rx_subscription *sub = evio_rx_subscription_new(loop, changes, observer, 1);
+    if (!sub) {
+        abort();
+    }
+    evio_rx_subscription_start(sub);
+    evio_rx_observable_free(changes);
+    evio_rx_observable_free(mapped);
+    evio_rx_observable_free(source);
+    return sub;
+}
+
 static void bench_threshold(evio_loop *loop, const char *name, size_t run_length)
 {
     uint64_t *values = evio_malloc(NUM_PUBLISH * sizeof(*values));
@@ -241,14 +265,7 @@ static void bench_threshold(evio_loop *loop, const char *name, size_t run_length
 
     count = 0;
     evio_rx_subject *subject = evio_rx_subject_new(loop, &evio_rx_uint64_type, 1);
-    evio_rx_observable *source = evio_rx_from_subject(subject);
-    evio_rx_observable *mapped = evio_rx_map(source, &bool_type, above_threshold,
-                                             (evio_rx_capture) {0});
-    evio_rx_observable *changes = evio_rx_distinct_until_changed(mapped, same_state,
-                                                                 (evio_rx_capture) {0});
-    evio_rx_observer observer = { .next = threshold_next, .ctx = &count };
-    evio_rx_subscription *sub = evio_rx_subscription_new(loop, changes, observer, 1);
-    evio_rx_subscription_start(sub);
+    evio_rx_subscription *sub = subscribe_threshold(loop, subject, &count);
     start = get_time_ns();
     for (size_t i = 0; i < NUM_PUBLISH; ++i) {
         if (evio_rx_subject_next(subject, &values[i])) {
@@ -261,11 +278,103 @@ static void bench_threshold(evio_loop *loop, const char *name, size_t run_length
     }
     print_benchmark(name, "rx", elapsed, NUM_PUBLISH);
     evio_rx_subscription_free(sub);
-    evio_rx_observable_free(changes);
-    evio_rx_observable_free(mapped);
-    evio_rx_observable_free(source);
     evio_rx_subject_free(subject);
     evio_free(values);
+}
+
+typedef struct {
+    uint64_t start;
+    uint64_t elapsed;
+    size_t samples;
+} ready_latency;
+
+static void threshold_ready_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    uint64_t now = get_time_ns();
+    ready_latency *latency = base->data;
+    latency->elapsed = now - latency->start;
+    eventfd_t value;
+    if (eventfd_read(((evio_poll *)base)->fd, &value) < 0 || value != 1) {
+        abort();
+    }
+    ++latency->samples;
+}
+
+static int compare_latency(const void *a, const void *b)
+{
+    uint64_t lhs = *(const uint64_t *)a;
+    uint64_t rhs = *(const uint64_t *)b;
+    return (lhs > rhs) - (lhs < rhs);
+}
+
+static void bench_threshold_latency(evio_loop *loop, size_t burst, bool rx)
+{
+    uint64_t delays[2000];
+    uint64_t values[1024];
+    for (size_t i = 0; i < 1024; ++i) {
+        values[i] = i & 1 ? 110 : 80;
+    }
+
+    size_t count = 0;
+    evio_rx_subject *subject = NULL;
+    evio_rx_subscription *sub = NULL;
+    if (rx) {
+        subject = evio_rx_subject_new(loop, &evio_rx_uint64_type, 1);
+        sub = subscribe_threshold(loop, subject, &count);
+    }
+    int fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (fd < 0) {
+        perror("eventfd");
+        abort();
+    }
+    evio_poll watcher;
+    ready_latency latency = {0};
+    evio_poll_init(&watcher, threshold_ready_cb, fd, EVIO_READ);
+    watcher.data = &latency;
+    evio_poll_start(loop, &watcher);
+
+    bool previous = false;
+    size_t pos = 0;
+    size_t samples = sizeof(delays) / sizeof(delays[0]);
+    for (size_t i = 0; i < samples; ++i) {
+        if (eventfd_write(fd, 1) < 0) {
+            abort();
+        }
+        latency.start = get_time_ns();
+        for (size_t j = 0; j < burst; ++j) {
+            const uint64_t *value = &values[pos++ % 1024];
+            if (rx) {
+                if (evio_rx_subject_next(subject, value)) {
+                    abort();
+                }
+            } else {
+                bool above = *value > 100;
+                if (!count || above != previous) {
+                    threshold_next(&count, &above);
+                    previous = above;
+                }
+            }
+        }
+        evio_run(loop, EVIO_RUN_NOWAIT);
+        if (latency.samples != i + 1 || count != (i + 1) * burst) {
+            abort();
+        }
+        delays[i] = latency.elapsed;
+    }
+    if (rx) {
+        if (evio_rx_subscription_is_closed(sub)) {
+            abort();
+        }
+        evio_rx_subscription_free(sub);
+        evio_rx_subject_free(subject);
+    }
+    evio_poll_stop(loop, &watcher);
+    close(fd);
+    qsort(delays, samples, sizeof(delays[0]), compare_latency);
+    printf("threshold_latency mode=%s burst=%zu samples=%zu p50_ns=%.1f p99_ns=%" PRIu64 "\n",
+           rx ? "rx" : burst ? "native" : "idle", burst, samples,
+           (delays[samples / 2 - 1] + delays[samples / 2]) / 2.0,
+           delays[(samples * 99 + 99) / 100 - 1]);
 }
 
 // --- subject fan-out to 8 subscribers ---
@@ -713,6 +822,11 @@ int main(void)
     bench_chain(loop);
     bench_threshold(loop, "rx_threshold_sparse", 64);
     bench_threshold(loop, "rx_threshold_alternating", 1);
+    bench_threshold_latency(loop, 0, false);
+    bench_threshold_latency(loop, 1, false);
+    bench_threshold_latency(loop, 1, true);
+    bench_threshold_latency(loop, 1024, false);
+    bench_threshold_latency(loop, 1024, true);
     bench_subject(loop);
     bench_fan_in(loop, false);
     bench_fan_in(loop, true);
