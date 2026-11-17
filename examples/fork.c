@@ -82,18 +82,37 @@ disconnected:
     client_close(loop, client);
 }
 
+typedef struct {
+    evio_poll io;
+    evio_timer retry;
+} listener_info;
+
+static void accept_retry_cb(evio_loop *loop, evio_base *base, evio_mask emask)
+{
+    listener_info *listener = base->data;
+    evio_poll_start(loop, &listener->io);
+}
+
 // Callback to handle new connections on the listening socket
 static void accept_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    evio_poll *w = (evio_poll *)base;
+    listener_info *listener = base->data;
+    evio_poll *w = &listener->io;
     struct sockaddr_in client_addr = { 0 };
     socklen_t client_len = sizeof(client_addr);
 
     int client_fd = accept4(w->fd, (struct sockaddr *)&client_addr, &client_len, SOCK_NONBLOCK);
     if (client_fd < 0) {
-        if (errno == EAGAIN || errno == EINTR) {
+        int err = errno;
+        if (err == EAGAIN || err == EINTR) {
             return;
         }
+        if (err == EMFILE || err == ENFILE) {
+            evio_poll_stop(loop, w);
+            evio_update_time(loop);
+            evio_timer_start(loop, &listener->retry, EVIO_TIME_FROM_MSEC(100));
+        }
+        errno = err;
         perror("accept");
         return;
     }
@@ -142,9 +161,12 @@ static int run_child(int listen_fd, const sigset_t *parent_mask)
     }
 
     // Watcher for new connections
-    evio_poll listen_w;
-    evio_poll_init(&listen_w, accept_cb, listen_fd, EVIO_READ);
-    evio_poll_start(loop, &listen_w);
+    listener_info listener;
+    evio_poll_init(&listener.io, accept_cb, listen_fd, EVIO_READ);
+    listener.io.data = &listener;
+    evio_timer_init(&listener.retry, accept_retry_cb, 0);
+    listener.retry.data = &listener;
+    evio_poll_start(loop, &listener.io);
 
     // Watcher for shutdown signal from parent
     evio_signal signal_w;

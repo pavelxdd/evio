@@ -13,8 +13,12 @@ static long fork_example_syscall(long number, ...);
 static int fork_example_signal(pid_t pid, int signum);
 static void *fork_example_calloc(size_t count, size_t size);
 static ssize_t fork_example_send(int fd, const void *buffer, size_t length, int flags);
+static int fork_example_accept4(int fd, struct sockaddr *address, socklen_t *length, int flags);
 
 static size_t fork_send_limit;
+static int fork_accept_error;
+static int fork_accept_last_error;
+static size_t fork_accept_calls;
 
 #define main fork_example_main
 #define fork fork_example_spawn
@@ -22,6 +26,7 @@ static size_t fork_send_limit;
 #define kill fork_example_signal
 #define calloc fork_example_calloc
 #define send fork_example_send
+#define accept4 fork_example_accept4
 #include "../examples/fork.c"
 #undef main
 #undef fork
@@ -29,6 +34,7 @@ static size_t fork_send_limit;
 #undef kill
 #undef calloc
 #undef send
+#undef accept4
 
 typedef struct {
     atomic_int fork_calls;
@@ -78,6 +84,19 @@ static ssize_t fork_example_send(int fd, const void *buffer, size_t length, int 
         length = fork_send_limit;
     }
     return send(fd, buffer, length, flags);
+}
+
+static int fork_example_accept4(int fd, struct sockaddr *address, socklen_t *length, int flags)
+{
+    ++fork_accept_calls;
+    if (fork_accept_error) {
+        errno = fork_accept_error;
+        fork_accept_last_error = errno;
+        return -1;
+    }
+    int client = accept4(fd, address, length, flags);
+    fork_accept_last_error = client < 0 ? errno : 0;
+    return client;
 }
 
 static pid_t fork_example_spawn(void)
@@ -550,40 +569,205 @@ static void fork_client_drain(fork_client_fixture *f, size_t queued)
     }
 }
 
-TEST(test_evio_fork_nonblocking_accept)
+typedef struct {
+    evio_loop *loop;
+    listener_info listener;
+    evio_signal signal_w;
+    sigset_t oldmask;
+    int peers[2];
+} fork_listener_fixture;
+
+static void fork_listener_connect(fork_listener_fixture *f, int index)
 {
-    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
-    assert_non_null(loop);
-    int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-    assert_true(fd >= 0);
-    struct sockaddr_in address = { .sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
-    assert_int_equal(bind(fd, (struct sockaddr *)&address, sizeof(address)), 0);
-    assert_int_equal(listen(fd, 1), 0);
+    int fd = f->listener.io.fd;
+    struct sockaddr_in address;
     socklen_t length = sizeof(address);
     assert_int_equal(getsockname(fd, (struct sockaddr *)&address, &length), 0);
-    int peer = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-    assert_true(peer >= 0);
-    int rc = connect(peer, (struct sockaddr *)&address, length);
+    f->peers[index] = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    assert_true(f->peers[index] >= 0);
+    int rc = connect(f->peers[index], (struct sockaddr *)&address, length);
     assert_true(rc == 0 || (rc < 0 && errno == EINPROGRESS));
     fork_wait_event(fd, POLLIN);
-    evio_poll listener;
-    evio_poll_init(&listener, accept_cb, fd, EVIO_READ);
-    evio_poll_start(loop, &listener);
-    accept_cb(loop, &listener.base, EVIO_READ);
-    assert_int_equal(loop->cleanup.count, 1);
-    client_info *client = loop->cleanup.ptr[0]->data;
+}
+
+static int fork_listener_setup(void **state)
+{
+    fork_listener_fixture *f = calloc(1, sizeof(*f));
+    assert_non_null(f);
+    *state = f;
+    f->listener.io.fd = -1;
+    f->peers[0] = f->peers[1] = -1;
+    fork_accept_error = 0;
+    fork_accept_last_error = 0;
+    fork_accept_calls = 0;
+    assert_int_equal(pthread_sigmask(SIG_SETMASK, NULL, &f->oldmask), 0);
+    f->loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(f->loop);
+    int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    assert_true(fd >= 0);
+    f->listener.io.fd = fd;
+    struct sockaddr_in address = { .sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
+    assert_int_equal(bind(fd, (struct sockaddr *)&address, sizeof(address)), 0);
+    assert_int_equal(listen(fd, 2), 0);
+    evio_poll_init(&f->listener.io, accept_cb, fd, EVIO_READ);
+    f->listener.io.data = &f->listener;
+    evio_timer_init(&f->listener.retry, accept_retry_cb, 0);
+    f->listener.retry.data = &f->listener;
+    evio_poll_start(f->loop, &f->listener.io);
+    evio_poll_update(f->loop);
+    fork_listener_connect(f, 0);
+    return 0;
+}
+
+static int fork_listener_teardown(void **state)
+{
+    fork_listener_fixture *f = *state;
+    fork_accept_error = 0;
+    fork_accept_last_error = 0;
+    fork_accept_calls = 0;
+    if (f->loop) {
+        evio_loop_free(f->loop);
+    }
+    if (f->listener.io.fd >= 0) {
+        close(f->listener.io.fd);
+    }
+    for (int i = 0; i < 2; ++i) {
+        if (f->peers[i] >= 0) {
+            close(f->peers[i]);
+        }
+    }
+    pthread_sigmask(SIG_SETMASK, &f->oldmask, NULL);
+    free(f);
+    return 0;
+}
+
+static void fork_listener_retry(fork_listener_fixture *f)
+{
+    assert_true(f->listener.retry.active);
+    f->loop->time = f->loop->timer.ptr[f->listener.retry.active - 1].time;
+    evio_timer_update(f->loop);
+    evio_invoke_pending(f->loop);
+    evio_poll_update(f->loop);
+    evio_poll_wait(f->loop, 0);
+    evio_invoke_pending(f->loop);
+}
+
+TEST(test_evio_fork_nonblocking_accept, .setup_func = fork_listener_setup,
+     .teardown_func = fork_listener_teardown)
+{
+    fork_listener_fixture *f = *state;
+    accept_cb(f->loop, &f->listener.io.base, EVIO_READ);
+    assert_int_equal(f->loop->cleanup.count, 1);
+    client_info *client = f->loop->cleanup.ptr[0]->data;
     int client_fd = client->io.fd;
     int flags = fcntl(client_fd, F_GETFL);
     assert_true(flags >= 0);
     assert_true(flags & O_NONBLOCK);
-    accept_cb(loop, &listener.base, EVIO_READ);
-    assert_int_equal(loop->cleanup.count, 1);
-    evio_loop_free(loop);
+    accept_cb(f->loop, &f->listener.io.base, EVIO_READ);
+    assert_int_equal(f->loop->cleanup.count, 1);
+    assert_true(f->listener.io.active);
+    assert_false(f->listener.retry.active);
+    evio_loop_free(f->loop);
+    f->loop = NULL;
     errno = 0;
     assert_int_equal(fcntl(client_fd, F_GETFD), -1);
     assert_int_equal(errno, EBADF);
-    close(peer);
-    close(fd);
+}
+
+TEST(test_evio_fork_accept_emfile, .setup_func = fork_listener_setup,
+     .teardown_func = fork_listener_teardown)
+{
+    fork_listener_fixture *f = *state;
+    evio_run(f->loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(f->loop->cleanup.count, 1);
+    fork_listener_connect(f, 1);
+    assert_int_equal(write(f->peers[0], "active", 6), 6);
+    fork_accept_error = EMFILE;
+    evio_run(f->loop, EVIO_RUN_NOWAIT);
+    evio_poll_wait(f->loop, 0);
+    evio_invoke_pending(f->loop);
+    fork_accept_error = 0;
+
+    assert_int_equal(fork_accept_last_error, EMFILE);
+    assert_int_equal(fork_accept_calls, 2);
+    assert_false(f->listener.io.active);
+    assert_true(f->listener.retry.active);
+    assert_int_equal(evio_timer_remaining(f->loop, &f->listener.retry), EVIO_TIME_FROM_MSEC(100));
+    assert_int_equal(f->loop->cleanup.count, 1);
+    char buffer[6];
+    fork_client_receive(f->peers[0], buffer, sizeof(buffer));
+    assert_memory_equal(buffer, "active", sizeof(buffer));
+
+    fork_listener_retry(f);
+    assert_int_equal(fork_accept_calls, 3);
+    assert_int_equal(fork_accept_last_error, 0);
+    assert_true(f->listener.io.active);
+    assert_false(f->listener.retry.active);
+    assert_int_equal(f->loop->cleanup.count, 2);
+    assert_int_equal(write(f->peers[1], "resume", 6), 6);
+    evio_run(f->loop, EVIO_RUN_NOWAIT);
+    fork_client_receive(f->peers[1], buffer, sizeof(buffer));
+    assert_memory_equal(buffer, "resume", sizeof(buffer));
+}
+
+TEST(test_evio_fork_accept_enfile, .setup_func = fork_listener_setup,
+     .teardown_func = fork_listener_teardown)
+{
+    fork_listener_fixture *f = *state;
+    fork_accept_error = ENFILE;
+    evio_run(f->loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(fork_accept_calls, 1);
+    assert_int_equal(fork_accept_last_error, ENFILE);
+    assert_false(f->listener.io.active);
+    assert_true(f->listener.retry.active);
+    assert_int_equal(evio_timer_remaining(f->loop, &f->listener.retry), EVIO_TIME_FROM_MSEC(100));
+    assert_int_equal(f->loop->cleanup.count, 0);
+
+    f->loop->time += EVIO_TIME_FROM_MSEC(100) - 1;
+    evio_timer_update(f->loop);
+    evio_invoke_pending(f->loop);
+    evio_poll_wait(f->loop, 0);
+    evio_invoke_pending(f->loop);
+    assert_int_equal(fork_accept_calls, 1);
+    assert_false(f->listener.io.active);
+    assert_true(f->listener.retry.active);
+
+    fork_listener_retry(f);
+    assert_int_equal(fork_accept_calls, 2);
+    assert_false(f->listener.io.active);
+    assert_true(f->listener.retry.active);
+    assert_int_equal(evio_timer_remaining(f->loop, &f->listener.retry), EVIO_TIME_FROM_MSEC(100));
+    assert_int_equal(f->loop->cleanup.count, 0);
+
+    fork_accept_error = 0;
+    fork_listener_retry(f);
+    assert_int_equal(fork_accept_calls, 3);
+    assert_true(f->listener.io.active);
+    assert_false(f->listener.retry.active);
+    assert_int_equal(f->loop->cleanup.count, 1);
+}
+
+TEST(test_evio_fork_accept_sigterm, .setup_func = fork_listener_setup,
+     .teardown_func = fork_listener_teardown)
+{
+    fork_listener_fixture *f = *state;
+    fork_accept_error = ENFILE;
+    evio_run(f->loop, EVIO_RUN_NOWAIT);
+    assert_true(f->listener.retry.active);
+    f->loop->timer.ptr[f->listener.retry.active - 1].time = EVIO_TIME_MAX;
+    evio_signal_init(&f->signal_w, child_signal_cb, SIGTERM);
+    evio_signal_start(f->loop, &f->signal_w);
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGTERM);
+    assert_int_equal(pthread_sigmask(SIG_UNBLOCK, &mask, NULL), 0);
+    assert_int_equal(raise(SIGTERM), 0);
+    evio_run(f->loop, EVIO_RUN_DEFAULT);
+    assert_int_equal(fork_accept_calls, 1);
+    assert_false(f->listener.io.active);
+    assert_true(f->listener.retry.active);
+    evio_loop_free(f->loop);
+    f->loop = NULL;
 }
 
 TEST(test_evio_fork_client_short_write, .setup_func = fork_client_setup,
