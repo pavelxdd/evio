@@ -358,30 +358,49 @@ static void fork_start(fork_fixture *f)
     assert_true(f->parent_fd >= 0);
 }
 
+static int fork_receive_child(fork_fixture *f)
+{
+    int index = -1;
+    int fd;
+    struct iovec iov = { .iov_base = &index, .iov_len = sizeof(index) };
+    union {
+        struct cmsghdr align;
+        // Exclude trailing padding so the kernel installs at most one fd.
+        char data[CMSG_LEN(sizeof(fd))];
+    } control = { .data = { 0 } };
+    struct msghdr msg = {
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+        .msg_control = control.data,
+        .msg_controllen = sizeof(control.data),
+    };
+    ssize_t n = recvmsg(f->control[0], &msg, MSG_CMSG_CLOEXEC);
+    if (n < 0) {
+        return errno;
+    }
+
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+    if (!cmsg || cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS ||
+        cmsg->cmsg_len != CMSG_LEN(sizeof(fd))) {
+        return EPROTO;
+    }
+
+    memcpy(&fd, CMSG_DATA(cmsg), sizeof(fd));
+    if (n != sizeof(index) || (msg.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) ||
+        index < 0 || index >= NUM_CHILDREN || f->children[index] >= 0) {
+        close(fd);
+        return EPROTO;
+    }
+
+    f->children[index] = fd;
+    return 0;
+}
+
 static void fork_receive(fork_fixture *f, int count)
 {
     for (int i = 0; i < count; ++i) {
         fork_wait_event(f->control[0], POLLIN);
-        int index = -1;
-        struct iovec iov = { .iov_base = &index, .iov_len = sizeof(index) };
-        union {
-            struct cmsghdr align;
-            char data[CMSG_SPACE(sizeof(int))];
-        } control = { .data = { 0 } };
-        struct msghdr msg = {
-            .msg_iov = &iov,
-            .msg_iovlen = 1,
-            .msg_control = control.data,
-            .msg_controllen = sizeof(control.data),
-        };
-        assert_int_equal(recvmsg(f->control[0], &msg, MSG_CMSG_CLOEXEC), sizeof(index));
-        assert_true(index >= 0 && index < NUM_CHILDREN);
-        struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
-        assert_non_null(cmsg);
-        assert_int_equal(cmsg->cmsg_level, SOL_SOCKET);
-        assert_int_equal(cmsg->cmsg_type, SCM_RIGHTS);
-        assert_int_equal(cmsg->cmsg_len, CMSG_LEN(sizeof(int)));
-        memcpy(&f->children[index], CMSG_DATA(cmsg), sizeof(int));
+        assert_int_equal(fork_receive_child(f), 0);
     }
 }
 
