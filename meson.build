@@ -209,6 +209,7 @@ if get_option('tests')
         'tests/test_heap.c',
         'tests/test_list.c',
         'tests/test_loop.c',
+        'tests/test_fork.c',
         'tests/test_poll.c',
         'tests/test_timer.c',
         'tests/test_signal.c',
