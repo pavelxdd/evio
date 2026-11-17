@@ -352,6 +352,47 @@ TEST(test_evio_rx_subject_restarted_subscriber_relinks_last)
     evio_loop_free(loop);
 }
 
+static int reject_negative(void *ctx, void *out, const void *value)
+{
+    int n = *(const int *)value;
+    if (n < 0) {
+        return EINVAL;
+    }
+    *(int *)out = n;
+    return 0;
+}
+
+TEST(test_evio_rx_subject_map_error_only_closes_its_subscription)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    evio_rx_subject *subject = evio_rx_subject_new(loop, &int_type, 1);
+    evio_rx_observable *source = evio_rx_from_subject(subject);
+    evio_rx_observable *mapped = evio_rx_map(source, &int_type, reject_negative,
+                                             (evio_rx_capture) {0});
+    subject_log checked = {0};
+    subject_log raw = {0};
+    checked.subscription = evio_rx_subscription_new(loop, mapped, observer(&checked), 1);
+    raw.subscription = evio_rx_subscription_new(loop, source, observer(&raw), 1);
+    evio_rx_subscription_start(checked.subscription);
+    evio_rx_subscription_start(raw.subscription);
+
+    int values[] = {-1, 2};
+    assert_int_equal(evio_rx_subject_next(subject, &values[0]), 0);
+    assert_int_equal(checked.error, EINVAL);
+    assert_int_equal(evio_rx_subject_next(subject, &values[1]), 0);
+    assert_int_equal(checked.count, 0);
+    assert_int_equal(raw.count, 2);
+    assert_memory_equal(raw.values, values, sizeof(values));
+    assert_false(evio_rx_subscription_is_closed(raw.subscription));
+
+    evio_rx_subscription_free(raw.subscription);
+    evio_rx_subscription_free(checked.subscription);
+    evio_rx_observable_free(mapped);
+    evio_rx_observable_free(source);
+    evio_rx_subject_free(subject);
+    evio_loop_free(loop);
+}
+
 static void overflow_subject(subject_log *log)
 {
     if (log->count != 1) {
