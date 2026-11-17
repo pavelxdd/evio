@@ -209,7 +209,7 @@ if get_option('tests')
         'tests/test_heap.c',
         'tests/test_list.c',
         'tests/test_loop.c',
-        'tests/test_fork.c',
+        'tests/test_fork_io.c',
         'tests/test_poll.c',
         'tests/test_timer.c',
         'tests/test_signal.c',
@@ -230,6 +230,19 @@ if get_option('tests')
         'tests/test_rx_random.c',
         'tests/test_rx_random_time.c',
     )
+
+    if cc.compiles('''
+        #include <sys/syscall.h>
+
+        int main(void)
+        {
+            (void)__NR_pidfd_open;
+            (void)__NR_pidfd_send_signal;
+            return 0;
+        }
+    ''', name: 'pidfd syscalls')
+        test_sources += files('tests/test_fork.c')
+    endif
 
     if io_uring_hdr
         test_sources += files('tests/test_uring.c')
