@@ -1624,6 +1624,21 @@ TEST(test_evio_uring_probe_no_sqarray)
     // GCOVR_EXCL_STOP
 
     evio_uring_test_probe_reset();
+
+    struct io_uring_params params = { 0 };
+    params.flags = IORING_SETUP_CLAMP | IORING_SETUP_NO_SQARRAY;
+    int fd = evio_test_uring_setup(2, &params);
+    // GCOVR_EXCL_START
+    if (fd < 0) {
+        int err = fd == -1 ? errno : -fd;
+        if (err == EINVAL) {
+            TEST_SKIPF("NO_SQARRAY unsupported by kernel");
+        }
+    }
+    // GCOVR_EXCL_STOP
+    assert_true(fd >= 0);
+    assert_int_equal(close(fd), 0);
+
     evio_uring_test_probe_force_sq_off_array_zero(true);
 
     evio_uring *iou = evio_uring_new();
