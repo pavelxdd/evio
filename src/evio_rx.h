@@ -6,8 +6,10 @@
  *
  * Not included by `evio.h`. All Rx objects are loop-thread-only. Loops outlive
  * their subscriptions, Subjects and descriptions retaining Subjects.
- * Constructors return owned handles, or NULL with errno set; runtime failures
- * close the run with a positive errno-compatible code.
+ * Constructors return owned handles, or NULL with errno set on recoverable errors.
+ * A runtime failure closes the run and calls `observer.error`, if supplied,
+ * with a positive errno-compatible code. Internal allocator failures are fatal
+ * (`EVIO_ABORT`) and are not reported through either channel.
  */
 
 #include "evio.h"
