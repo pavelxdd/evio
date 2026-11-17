@@ -1,6 +1,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/eventfd.h>
 #include <unistd.h>
 
@@ -572,6 +573,121 @@ static void bench_lifecycle(evio_loop *loop)
     evio_rx_observable_free(array);
 }
 
+typedef struct {
+    size_t live;
+    size_t peak;
+    size_t allocations;
+} allocation_stats;
+
+static void *count_allocation(void *ctx, void *ptr, size_t size)
+{
+    allocation_stats *stats = ctx;
+    max_align_t *block = ptr ? (max_align_t *)ptr - 1 : NULL;
+    size_t old = block ? *(size_t *)block : 0;
+    if (!size) {
+        free(block);
+        stats->live -= old;
+        return NULL;
+    }
+    if (size > SIZE_MAX - sizeof(*block)) {
+        return NULL;
+    }
+    block = realloc(block, sizeof(*block) + size);
+    if (!block) {
+        return NULL;
+    }
+    *(size_t *)block = size;
+    stats->allocations++;
+    stats->live = stats->live - old + size;
+    if (stats->live > stats->peak) {
+        stats->peak = stats->live;
+    }
+    return block + 1;
+}
+
+enum subscription_case { COLD, WARM, RESTART, BURST };
+
+static void bench_live_subscriptions(evio_loop *loop, enum subscription_case mode,
+                                     allocation_stats *stats)
+{
+    static const char *const names[] = { "cold", "warm", "restart", "burst" };
+    evio_rx_subscription *subs[1024];
+    sink results[1024] = {0};
+    size_t count = mode == BURST ? 1024 : 1;
+    size_t rounds = stats ? 1 : NUM_CYCLES / count;
+    uint64_t create_ns = 0, start_ns = 0, free_ns = 0;
+    uint64_t value = 1;
+    evio_rx_subject *subject = evio_rx_subject_new(loop, &evio_rx_uint64_type, 16);
+    evio_rx_observable *source = evio_rx_from_subject(subject);
+    for (size_t r = 0; r < rounds; ++r) {
+        size_t baseline = stats ? stats->live : 0;
+        evio_rx_observable *map = map_add_two(source, false);
+        size_t described = stats ? stats->live : 0;
+        if (mode == WARM || mode == RESTART) {
+            // The first run sizes the arena; the second leaves a reusable block of that size.
+            for (size_t i = 0; i < 2; ++i) {
+                subs[0] = evio_rx_subscription_new(loop, map, sink_observer(results), 16);
+                evio_rx_subscription_start(subs[0]);
+                if (mode == WARM || !i) {
+                    evio_rx_subscription_free(subs[0]);
+                }
+            }
+        }
+        size_t allocations = stats ? stats->allocations : 0;
+        if (stats) {
+            stats->peak = stats->live;
+        }
+        uint64_t t = get_time_ns();
+        if (mode == RESTART) {
+            evio_rx_subscription_restart(subs[0]);
+        } else {
+            for (size_t i = 0; i < count; ++i) {
+                subs[i] = evio_rx_subscription_new(loop, map, sink_observer(&results[i]), 16);
+            }
+            uint64_t created = get_time_ns();
+            create_ns += created - t;
+            t = created;
+            for (size_t i = 0; i < count; ++i) {
+                evio_rx_subscription_start(subs[i]);
+            }
+        }
+        start_ns += get_time_ns() - t;
+        if (evio_rx_subject_next(subject, &value)) {
+            abort();
+        }
+        size_t active = stats ? stats->live - described : 0;
+        t = get_time_ns();
+        for (size_t i = 0; i < count; ++i) {
+            evio_rx_subscription_free(subs[i]);
+        }
+        free_ns += get_time_ns() - t;
+        size_t retained = stats ? stats->live - described : 0;
+        evio_rx_observable_free(map);
+        if (stats) {
+            if (stats->live != baseline) {
+                abort();
+            }
+            printf("rx_subscription_memory mode=%s count=%zu allocations=%zu active_bytes=%zu "
+                   "peak_bytes=%zu retained_bytes=%zu after_description_bytes=%zu\n",
+                   names[mode], count, stats->allocations - allocations, active,
+                   stats->peak - described, retained, stats->live - baseline);
+        }
+    }
+    for (size_t i = 0; i < count; ++i) {
+        check(&results[i], rounds, rounds * 3);
+    }
+    if (!stats) {
+        if (mode != RESTART) {
+            print_benchmark(names[mode], "subscription_new", create_ns, rounds * count);
+        }
+        print_benchmark(names[mode], mode == RESTART ? "subscription_restart" : "subscription_start",
+                        start_ns, rounds * count);
+        print_benchmark(names[mode], "subscription_free", free_ns, rounds * count);
+    }
+    evio_rx_observable_free(source);
+    evio_rx_subject_free(subject);
+}
+
 // --- subject with 8 subscribers: subscribe, complete, free ---
 typedef struct native_listener {
     struct native_listener *next;
@@ -812,8 +928,21 @@ static void bench_switch(evio_loop *loop)
     evio_free(values);
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    if (argc == 2 && !strcmp(argv[1], "--allocations")) {
+        allocation_stats stats = {0};
+        evio_set_allocator(count_allocation, &stats);
+        evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+        for (enum subscription_case mode = COLD; mode <= BURST; ++mode) {
+            bench_live_subscriptions(loop, mode, &stats);
+        }
+        evio_loop_free(loop);
+        return stats.live ? EXIT_FAILURE : EXIT_SUCCESS;
+    }
+    if (argc != 1) {
+        return EXIT_FAILURE;
+    }
     print_versions();
 
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
@@ -831,6 +960,9 @@ int main(void)
     bench_fan_in(loop, false);
     bench_fan_in(loop, true);
     bench_lifecycle(loop);
+    for (enum subscription_case mode = COLD; mode <= BURST; ++mode) {
+        bench_live_subscriptions(loop, mode, NULL);
+    }
     bench_subject_close(loop);
     bench_timer(loop);
     bench_debounce(loop);
