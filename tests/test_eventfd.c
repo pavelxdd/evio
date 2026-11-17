@@ -120,6 +120,44 @@ TEST(test_evio_eventfd_drain_read_eintr)
     evio_loop_free(loop);
 }
 
+TEST(test_evio_eventfd_edges_without_drain)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+    evio_eventfd_init(loop);
+    evio_poll_update(loop);
+
+    atomic_store_explicit(&loop->eventfd_allow.value, 1, memory_order_relaxed);
+
+    evio_eventfd_write(loop);
+    evio_poll_wait(loop, 0);
+    size_t first_count = evio_pending_count(loop);
+    evio_invoke_pending(loop);
+    bool first_pending = atomic_load_explicit(&loop->event_pending.value, memory_order_relaxed);
+
+    evio_poll_wait(loop, 0);
+    size_t repeated_count = evio_pending_count(loop);
+    evio_invoke_pending(loop);
+
+    evio_eventfd_write(loop);
+    evio_poll_wait(loop, 0);
+    size_t second_count = evio_pending_count(loop);
+    evio_invoke_pending(loop);
+    bool second_pending = atomic_load_explicit(&loop->event_pending.value, memory_order_relaxed);
+
+    uint64_t val = 0;
+    ssize_t res = read(loop->event.fd, &val, sizeof(val));
+    evio_loop_free(loop);
+
+    assert_int_equal(first_count, 1);
+    assert_false(first_pending);
+    assert_int_equal(repeated_count, 0);
+    assert_int_equal(second_count, 1);
+    assert_false(second_pending);
+    assert_int_equal(res, sizeof(val));
+    assert_int_equal(val, 2);
+}
+
 TEST(test_evio_eventfd_eagain)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
