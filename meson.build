@@ -311,6 +311,7 @@ if get_option('examples')
         'rx_sources',
         'rx_producer',
         'rx_subject',
+        'rx_threshold',
         'rx_values',
         'rx_combine',
         'rx_time',
