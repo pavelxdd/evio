@@ -133,7 +133,17 @@ evio_sources = files(
     'src/evio_rx_flatten.c',
 )
 
-io_uring_hdr = cc.has_header('linux/io_uring.h')
+io_uring_hdr = cc.compiles('''
+    #include <linux/io_uring.h>
+
+    int main(void)
+    {
+        (void)IORING_OP_EPOLL_CTL;
+        (void)IORING_SETUP_CLAMP;
+        (void)IORING_FEAT_SINGLE_MMAP;
+        return 0;
+    }
+''', name: 'io_uring API')
 if io_uring_hdr
     evio_sources += files('src/evio_uring.c')
     add_project_arguments('-DEVIO_IO_URING=1', language: 'c')
