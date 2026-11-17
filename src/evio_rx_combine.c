@@ -181,7 +181,7 @@ static void latest_next(evio_rx_node *base, evio_rx_node *input, const void *val
         int error = evio_rx_buffer_push(latest, value);
         if (error) {
             evio_rx_fail(base->root, error);
-        } else {
+        } else if (!base->closed) {
             if (first) {
                 node->ready++;
             }

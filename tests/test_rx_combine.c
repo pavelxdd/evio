@@ -839,6 +839,39 @@ TEST(test_evio_rx_combine_latest_combiner_error_stops_remaining_values)
     evio_loop_free(loop);
 }
 
+TEST(test_evio_rx_combine_latest_cancel_during_last_input_copy)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    owned_log data = { .cancel_in_copy = true };
+    evio_rx_type type = owned_type(&data);
+    evio_rx_subject *subject = evio_rx_subject_new(loop, &type, 1);
+    int number = 7;
+    evio_rx_observable *sources[] = {
+        evio_rx_from_subject(subject), evio_rx_from_array(&int_type, &number, 1),
+    };
+    evio_rx_combiner combiner = {
+        .type = &int_type, .cb = owned_sum, .capture = { .data = &data },
+    };
+    evio_rx_observable *latest = evio_rx_combine_latest(sources, 2, combiner);
+    data.log.subscription = evio_rx_subscription_new(loop, latest, observer(&data.log), 1);
+    evio_rx_subscription_start(data.log.subscription);
+
+    owned_number value = { .self = &value, .number = &number };
+    assert_int_equal(evio_rx_subject_next(subject, &value), 0);
+    assert_true(evio_rx_subscription_is_closed(data.log.subscription));
+    assert_int_equal(data.combine_calls, 0);
+    assert_int_equal(data.log.count, 0);
+    assert_int_equal(data.created, 1);
+    assert_int_equal(data.destroyed, 1);
+
+    evio_rx_subscription_free(data.log.subscription);
+    evio_rx_observable_free(latest);
+    evio_rx_observable_free(sources[0]);
+    evio_rx_observable_free(sources[1]);
+    evio_rx_subject_free(subject);
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_rx_combine_latest_copy_failure_releases_retained_values)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
