@@ -46,6 +46,7 @@ void evio_async_start(evio_loop *loop, evio_async *w);
 
 /**
  * @brief Stops an async watcher, deactivating it.
+ * @details Does not wait for concurrent evio_async_send() calls to return.
  * @param loop The event loop.
  * @param w The async watcher to stop.
  */
@@ -54,7 +55,8 @@ void evio_async_stop(evio_loop *loop, evio_async *w);
 
 /**
  * @brief Sends an event to an async watcher from any thread.
- * @details Thread-safe.
+ * @details Thread-safe. Before freeing loop or w, the caller must prevent new
+ * sends and wait for all ongoing sends to return.
  * @param loop The event loop to wake up.
  * @param w The async watcher to signal.
  */
