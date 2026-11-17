@@ -14,7 +14,7 @@ typedef struct evio_rx_subject evio_rx_subject;
  * @brief Creates a Subject.
  * @param loop The loop; the Subject and descriptions retaining it are bound to it.
  * @param type The value type.
- * @param capacity Positive capacity of the FIFO of nested publications.
+ * @param capacity Maximum number of nested values queued at once; must be positive.
  * @return The Subject, or NULL with errno set.
  */
 __evio_public __evio_nodiscard
@@ -32,9 +32,10 @@ evio_rx_observable *evio_rx_from_subject(evio_rx_subject *subject);
 
 /**
  * @brief Publishes a value to current subscribers synchronously.
- * @details Nested publications are queued. Failures local to one subscription
- * still return 0. Subject FIFO overflow fails the Subject and all subscribers
- * with EOVERFLOW.
+ * @details The outermost publication drains nested values without yielding to the
+ * loop. Queue capacity does not bound the total work done before it returns.
+ * Failures local to one subscription still return 0. Subject FIFO overflow
+ * fails the Subject and all subscribers with EOVERFLOW.
  * @param subject The Subject.
  * @param value The borrowed value; NULL fails the Subject with EINVAL.
  * @return 0, or -1 with errno set; EPIPE once the Subject is closed.
