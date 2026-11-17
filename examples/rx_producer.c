@@ -115,16 +115,21 @@ int main(void)
     printer first = { .name = "first" };
     printer second = { .name = "second", .cancel_at = 2 };
     printer *printers[] = { &first, &second };
-    for (size_t i = 0; i < 2; ++i) {
+    size_t i = 0;
+    int status = EXIT_FAILURE;
+    for (; i < 2; ++i) {
         evio_rx_observer observer = {
             .next = print_next,
             .complete = print_complete,
             .ctx = printers[i],
         };
         printers[i]->subscription = evio_rx_subscription_new(loop, counting, observer, 16);
+        if (!printers[i]->subscription) {
+            perror("evio_rx_subscription_new");
+            goto out;
+        }
         evio_rx_subscription_start(printers[i]->subscription);
     }
-    evio_rx_observable_free(counting);
 
     printf("Event loop running.\n");
 
@@ -132,8 +137,13 @@ int main(void)
 
     printf("Event loop finished.\n");
 
-    evio_rx_subscription_free(first.subscription);
-    evio_rx_subscription_free(second.subscription);
+    status = EXIT_SUCCESS;
+
+out:
+    while (i) {
+        evio_rx_subscription_free(printers[--i]->subscription);
+    }
+    evio_rx_observable_free(counting);
     evio_loop_free(loop);
-    return EXIT_SUCCESS;
+    return status;
 }

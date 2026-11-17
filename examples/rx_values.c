@@ -131,6 +131,11 @@ int main(void)
     char second[] = "beta";
     char *words[] = { first, second };
     evio_rx_observable *strings = evio_rx_from_array(&string_type, words, 2);
+    if (!strings) {
+        perror("evio_rx_from_array");
+        evio_loop_free(loop);
+        return EXIT_FAILURE;
+    }
 
     // The array keeps its own copies: this change is not seen by subscribers.
     first[0] = 'A';
