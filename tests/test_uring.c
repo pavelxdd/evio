@@ -19,7 +19,10 @@ static struct {
 
     unsigned int mmap_call;
     unsigned int mmap_fail_at;
+    unsigned int main_mmap_fail_at;
     int mmap_err;
+    uintptr_t main_ring_addr;
+    size_t main_ring_len;
 
     unsigned int setup_fail_count;
     unsigned int setup_fail_entries;
@@ -28,7 +31,7 @@ static struct {
     uint32_t main_setup_flags;
     uint32_t main_setup_disabled_features;
     uint32_t main_setup_features;
-    bool main_setup_succeeded;
+    int main_setup_fd;
 
     bool epoll_fail;
     int epoll_err;
@@ -46,7 +49,9 @@ static struct {
 
     bool cqe_res_active;
     int cqe_res;
-} evio_uring_probe_injection;
+} evio_uring_probe_injection = {
+    .main_setup_fd = -1,
+};
 
 void evio_uring_test_inject_cqe_res_once(int fd, int op, int res)
 {
@@ -72,6 +77,7 @@ void evio_uring_test_inject_reset(void)
 void evio_uring_test_probe_reset(void)
 {
     memset(&evio_uring_probe_injection, 0, sizeof(evio_uring_probe_injection));
+    evio_uring_probe_injection.main_setup_fd = -1;
 }
 
 void evio_uring_test_probe_disable_single_mmap(bool disable)
@@ -152,7 +158,11 @@ int evio_test_uring_setup(unsigned int entries, struct io_uring_params *params)
     if (fd >= 0 && entries == EVIO_URING_EVENTS) {
         params->features &= ~evio_uring_probe_injection.main_setup_disabled_features;
         evio_uring_probe_injection.main_setup_features = params->features;
-        evio_uring_probe_injection.main_setup_succeeded = true;
+        evio_uring_probe_injection.main_setup_fd = fd;
+        if (evio_uring_probe_injection.main_mmap_fail_at) {
+            evio_uring_probe_injection.mmap_fail_at = evio_uring_probe_injection.main_mmap_fail_at;
+            evio_uring_probe_injection.main_mmap_fail_at = 0;
+        }
     }
     return fd;
 }
@@ -223,7 +233,13 @@ void *evio_test_uring_mmap(void *addr, size_t length, int prot,
         return MAP_FAILED;
     }
 
-    return mmap(addr, length, prot, flags, fd, offset);
+    void *ptr = mmap(addr, length, prot, flags, fd, offset);
+    if (ptr != MAP_FAILED && fd == evio_uring_probe_injection.main_setup_fd &&
+        offset == IORING_OFF_SQ_RING) {
+        evio_uring_probe_injection.main_ring_addr = (uintptr_t)ptr;
+        evio_uring_probe_injection.main_ring_len = length;
+    }
+    return ptr;
 }
 
 int evio_test_uring_epoll_create1(int flags)
@@ -1324,7 +1340,7 @@ TEST(test_evio_loop_uring_requires_single_mmap)
     evio_uring_probe_injection.main_setup_disabled_features = IORING_FEAT_SINGLE_MMAP;
     evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
     assert_non_null(loop);
-    bool setup_succeeded = evio_uring_probe_injection.main_setup_succeeded;
+    int setup_fd = evio_uring_probe_injection.main_setup_fd;
     uint32_t features = evio_uring_probe_injection.main_setup_features;
     unsigned int mmap_calls = evio_uring_probe_injection.mmap_call;
     bool has_uring = loop->iou != NULL;
@@ -1332,7 +1348,7 @@ TEST(test_evio_loop_uring_requires_single_mmap)
 
     assert_pipe_read(loop);
     evio_loop_free(loop);
-    assert_true(setup_succeeded);
+    assert_true(setup_fd >= 0);
     assert_false(features & IORING_FEAT_SINGLE_MMAP);
     assert_int_equal(mmap_calls, 0);
     assert_false(has_uring);
@@ -1424,6 +1440,96 @@ TEST(test_evio_loop_uring_fallback_enter_eperm)
 
     assert_pipe_read(loop);
     evio_loop_free(loop);
+}
+
+TEST(test_evio_uring_main_fail_single_mmap)
+{
+    // GCOVR_EXCL_START
+    if (!evio_test_uring_supported()) {
+        TEST_SKIPF("io_uring unavailable");
+    }
+    // GCOVR_EXCL_STOP
+
+    evio_uring_test_probe_reset();
+    evio_uring_probe_injection.main_mmap_fail_at = 1;
+    evio_uring_probe_injection.mmap_err = ENOMEM;
+    evio_uring *iou = evio_uring_new();
+    int fd = evio_uring_probe_injection.main_setup_fd;
+    int fd_result = fcntl(fd, F_GETFD);
+    int fd_err = errno;
+    unsigned int main_mmap_fail_at = evio_uring_probe_injection.main_mmap_fail_at;
+    unsigned int mmap_fail_at = evio_uring_probe_injection.mmap_fail_at;
+    bool has_uring = iou != NULL;
+    evio_uring_test_probe_reset();
+
+    if (iou) {
+        evio_uring_free(iou);
+    } else if (fd_result >= 0) {
+        close(fd);
+    }
+
+    assert_true(fd >= 0);
+    assert_int_equal(fd_result, -1);
+    assert_int_equal(fd_err, EBADF);
+    assert_false(has_uring);
+    assert_int_equal(main_mmap_fail_at, 0);
+    assert_int_equal(mmap_fail_at, 0);
+}
+
+TEST(test_evio_uring_main_fail_sqe_mmap)
+{
+    // GCOVR_EXCL_START
+    if (!evio_test_uring_supported()) {
+        TEST_SKIPF("io_uring unavailable");
+    }
+    // GCOVR_EXCL_STOP
+
+    long page_size = sysconf(_SC_PAGESIZE);
+    assert_true(page_size > 0);
+
+    evio_uring_test_probe_reset();
+    evio_uring_probe_injection.main_mmap_fail_at = 2;
+    evio_uring_probe_injection.mmap_err = ENOMEM;
+    evio_uring *iou = evio_uring_new();
+    // Query the released range before any allocation can reuse its addresses.
+    int fd = evio_uring_probe_injection.main_setup_fd;
+    int fd_result = fcntl(fd, F_GETFD);
+    int fd_err = errno;
+    uintptr_t addr = evio_uring_probe_injection.main_ring_addr;
+    size_t length = evio_uring_probe_injection.main_ring_len;
+    bool all_unmapped = true;
+    for (size_t offset = 0; offset < length; offset += (size_t)page_size) {
+        unsigned char vec;
+        int result = mincore((void *)(addr + offset), 1, &vec);
+        int err = errno;
+        if (result != -1 || err != ENOMEM) {
+            all_unmapped = false;
+        }
+    }
+    unsigned int main_mmap_fail_at = evio_uring_probe_injection.main_mmap_fail_at;
+    unsigned int mmap_fail_at = evio_uring_probe_injection.mmap_fail_at;
+    bool has_uring = iou != NULL;
+    evio_uring_test_probe_reset();
+
+    if (iou) {
+        evio_uring_free(iou);
+    } else {
+        if (length && !all_unmapped) {
+            munmap((void *)addr, length);
+        }
+        if (fd_result >= 0) {
+            close(fd);
+        }
+    }
+
+    assert_true(fd >= 0);
+    assert_true(length > 0);
+    assert_true(all_unmapped);
+    assert_int_equal(fd_result, -1);
+    assert_int_equal(fd_err, EBADF);
+    assert_false(has_uring);
+    assert_int_equal(main_mmap_fail_at, 0);
+    assert_int_equal(mmap_fail_at, 0);
 }
 
 TEST(test_evio_uring_probe_fail_single_mmap)
