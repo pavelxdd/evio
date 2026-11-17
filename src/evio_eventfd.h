@@ -20,7 +20,7 @@ void evio_eventfd_init(evio_loop *loop);
  * @param loop The event loop.
  */
 __evio_nonnull(1)
-void evio_eventfd_write(evio_loop *loop);
+void evio_eventfd_write(evio_loop *loop, bool in_signal_handler);
 
 /**
  * @brief The internal callback for handling eventfd notifications.

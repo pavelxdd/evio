@@ -2,6 +2,7 @@
 #include "abort.h"
 
 #include <sys/resource.h>
+#include <sys/wait.h>
 
 #include "evio_eventfd.h"
 #include "evio_eventfd_sys.h"
@@ -115,7 +116,7 @@ TEST(test_evio_eventfd_drain_read_eintr)
     evio_eventfd_test_inject_write_fail_once(EAGAIN);
     evio_eventfd_test_inject_read_fail_once(EINTR);
 
-    evio_eventfd_write(loop);
+    evio_eventfd_write(loop, false);
 
     evio_loop_free(loop);
 }
@@ -129,7 +130,7 @@ TEST(test_evio_eventfd_edges_without_drain)
 
     atomic_store_explicit(&loop->eventfd_allow.value, 1, memory_order_relaxed);
 
-    evio_eventfd_write(loop);
+    evio_eventfd_write(loop, false);
     evio_poll_wait(loop, 0);
     size_t first_count = evio_pending_count(loop);
     evio_invoke_pending(loop);
@@ -139,7 +140,7 @@ TEST(test_evio_eventfd_edges_without_drain)
     size_t repeated_count = evio_pending_count(loop);
     evio_invoke_pending(loop);
 
-    evio_eventfd_write(loop);
+    evio_eventfd_write(loop, false);
     evio_poll_wait(loop, 0);
     size_t second_count = evio_pending_count(loop);
     evio_invoke_pending(loop);
@@ -177,7 +178,7 @@ TEST(test_evio_eventfd_eagain)
     // This call to evio_eventfd_write will first attempt a write(1), which fails with EAGAIN.
     // It will then read() the counter (getting UINT64_MAX - 1 and resetting it to 0),
     // and then successfully write(1).
-    evio_eventfd_write(loop);
+    evio_eventfd_write(loop, false);
 
     uint64_t result_val;
     assert_int_equal(read(fd, &result_val, sizeof(result_val)), sizeof(result_val));
@@ -230,7 +231,7 @@ TEST(test_evio_eventfd_write_ebadf)
 
     // EBADF => EVIO_ABORT.
     if (setjmp(jmp) == 0) {
-        evio_eventfd_write(loop);
+        evio_eventfd_write(loop, false);
         fail(); // GCOVR_EXCL_LINE
     }
 
@@ -242,6 +243,65 @@ TEST(test_evio_eventfd_write_ebadf)
     evio_loop_free(loop);
 }
 
+static FILE *eventfd_signal_abort_handler(void *ctx)
+{
+    _exit(125);
+}
+
+static void eventfd_signal_abort_func(void)
+{
+    _exit(125);
+}
+
+static void expect_eventfd_signal_abort(bool drain)
+{
+    pid_t pid = fork();
+    assert_true(pid >= 0);
+    if (pid == 0) {
+        const struct rlimit limit = { 0, 0 };
+        if (setrlimit(RLIMIT_CORE, &limit) < 0 || signal(SIGABRT, SIG_DFL) == SIG_ERR) {
+            _exit(125);
+        }
+        evio_set_abort(eventfd_signal_abort_handler, NULL);
+        evio_set_abort_func(eventfd_signal_abort_func);
+
+        evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+        if (!loop) {
+            _exit(125);
+        }
+        evio_signal sig;
+        evio_signal_init(&sig, generic_cb, SIGUSR1);
+        evio_signal_start(loop, &sig);
+        atomic_store_explicit(&loop->eventfd_allow.value, 1, memory_order_relaxed);
+
+        evio_eventfd_test_inject_write_fail_once(drain ? EAGAIN : EIO);
+        if (drain) {
+            evio_eventfd_test_inject_read_fail_once(EIO);
+        }
+        raise(SIGUSR1);
+        _exit(125);
+    }
+
+    int status;
+    pid_t waited;
+    do {
+        waited = waitpid(pid, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    assert_int_equal(waited, pid);
+    assert_true(WIFSIGNALED(status));
+    assert_int_equal(WTERMSIG(status), SIGABRT);
+}
+
+TEST(test_evio_eventfd_signal_write_failure)
+{
+    expect_eventfd_signal_abort(false);
+}
+
+TEST(test_evio_eventfd_signal_drain_failure)
+{
+    expect_eventfd_signal_abort(true);
+}
+
 TEST(test_evio_eventfd_write_pending)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
@@ -250,11 +310,11 @@ TEST(test_evio_eventfd_write_pending)
 
     // First call: event_pending becomes 1, but returns due to eventfd_allow being 0.
     // The if() in evio_eventfd_write will be false.
-    evio_eventfd_write(loop);
+    evio_eventfd_write(loop, false);
     assert_true(atomic_load_explicit(&loop->event_pending.value, memory_order_relaxed));
 
     // Second call: event_pending is already 1, so the if() is true and it returns.
-    evio_eventfd_write(loop);
+    evio_eventfd_write(loop, false);
 
     uint64_t val;
     ssize_t res = read(loop->event.fd, &val, sizeof(val));
@@ -272,7 +332,7 @@ TEST(test_evio_eventfd_write_allowed_keeps_pending)
 
     atomic_store_explicit(&loop->eventfd_allow.value, 1, memory_order_relaxed);
 
-    evio_eventfd_write(loop);
+    evio_eventfd_write(loop, false);
     assert_true(atomic_load_explicit(&loop->event_pending.value, memory_order_relaxed));
 
     evio_eventfd_cb(loop, &loop->event.base, EVIO_READ);
@@ -343,7 +403,7 @@ TEST(test_evio_eventfd_write_not_allowed)
     evio_eventfd_init(loop);
 
     // eventfd_allow is 0 by default.
-    evio_eventfd_write(loop);
+    evio_eventfd_write(loop, false);
 
     uint64_t val;
     ssize_t res = read(loop->event.fd, &val, sizeof(val));

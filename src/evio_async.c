@@ -23,6 +23,6 @@ void evio_async_send(evio_loop *loop, evio_async *w)
     atomic_store_explicit(&w->status.value, 1, memory_order_release);
 
     if (!atomic_exchange_explicit(&loop->async_pending.value, 1, memory_order_acq_rel)) {
-        evio_eventfd_write(loop);
+        evio_eventfd_write(loop, false);
     }
 }

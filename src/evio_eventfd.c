@@ -32,7 +32,7 @@ void evio_eventfd_init(evio_loop *loop)
  * @details Retries on EINTR. On EAGAIN: nothing to drain. Other errors abort.
  * @param fd The eventfd file descriptor.
  */
-static void evio_eventfd_drain(int fd)
+static void evio_eventfd_drain(int fd, bool in_signal_handler)
 {
     for (eventfd_t val = 1; /**/; val = 1) {
         ssize_t res = EVIO_EVENTFD_READ(fd, &val, sizeof(val));
@@ -46,6 +46,9 @@ static void evio_eventfd_drain(int fd)
             continue;
         }
         if (__evio_unlikely(err != EAGAIN)) {
+            if (in_signal_handler) {
+                abort();
+            }
             EVIO_ABORT("eventfd read failed, error %d: %s\n",
                        err, EVIO_STRERROR(err));
         }
@@ -59,7 +62,7 @@ static void evio_eventfd_drain(int fd)
  * @details Retries on EINTR. On EAGAIN (counter max): drain once and retry.
  * @param fd The eventfd file descriptor.
  */
-static void evio_eventfd_notify(int fd)
+static void evio_eventfd_notify(int fd, bool in_signal_handler)
 {
     for (eventfd_t val = 1; /**/; val = 1) {
         ssize_t res = EVIO_EVENTFD_WRITE(fd, &val, sizeof(val));
@@ -75,15 +78,18 @@ static void evio_eventfd_notify(int fd)
         // GCOVR_EXCL_STOP
 
         if (__evio_unlikely(err != EAGAIN)) {
+            if (in_signal_handler) {
+                abort();
+            }
             EVIO_ABORT("eventfd write failed, error %d: %s\n",
                        err, EVIO_STRERROR(err));
         }
 
-        evio_eventfd_drain(fd);
+        evio_eventfd_drain(fd, in_signal_handler);
     }
 }
 
-void evio_eventfd_write(evio_loop *loop)
+void evio_eventfd_write(evio_loop *loop, bool in_signal_handler)
 {
     if (atomic_exchange_explicit(&loop->event_pending.value, 1, memory_order_seq_cst)) {
         return;
@@ -94,7 +100,7 @@ void evio_eventfd_write(evio_loop *loop)
     }
 
     int err = errno;
-    evio_eventfd_notify(loop->event.fd);
+    evio_eventfd_notify(loop->event.fd, in_signal_handler);
     errno = err;
 }
 

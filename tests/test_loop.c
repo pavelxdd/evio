@@ -43,7 +43,7 @@ void evio_test_loop_after_timeout(evio_loop *loop, const int *timeout)
         return;
     }
 
-    evio_eventfd_write(loop);
+    evio_eventfd_write(loop, false);
 }
 
 TEST(test_evio_test_loop_after_timeout_timeout_zero)

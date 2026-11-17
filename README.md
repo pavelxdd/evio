@@ -127,7 +127,7 @@ The contracts are documented in `src/evio_rx*.h`. `just examples` builds the
 - Threading: `evio_loop` and watchers are single-threaded; cross-thread wakeups via `evio_async_send()`.
 - `evio_poll_stop()` removes the fd from epoll synchronously when stopping its last watcher, including with `EVIO_FLAG_URING`. After it returns, the caller may close the fd from another thread.
 - Fork: create a new loop after `fork()` in the child.
-- Fatal errors: unrecoverable conditions call `EVIO_ABORT` (customizable via `evio_set_abort()`).
+- Fatal errors call `EVIO_ABORT` (customizable via `evio_set_abort()`). On a fatal `eventfd` wakeup failure in a POSIX signal handler, evio calls `abort()` directly without its diagnostics or custom hooks.
 - `evio_invoke_pending()` is re-entrant; avoid unbounded recursion from callbacks.
 
 ## License
