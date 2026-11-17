@@ -28,6 +28,7 @@ static struct {
     uint32_t main_setup_flags;
     uint32_t main_setup_disabled_features;
     uint32_t main_setup_features;
+    bool main_setup_succeeded;
 
     bool epoll_fail;
     int epoll_err;
@@ -151,6 +152,7 @@ int evio_test_uring_setup(unsigned int entries, struct io_uring_params *params)
     if (fd >= 0 && entries == EVIO_URING_EVENTS) {
         params->features &= ~evio_uring_probe_injection.main_setup_disabled_features;
         evio_uring_probe_injection.main_setup_features = params->features;
+        evio_uring_probe_injection.main_setup_succeeded = true;
     }
     return fd;
 }
@@ -1309,6 +1311,32 @@ TEST(test_evio_loop_uring_without_nodrop)
     assert_true(has_uring);
 }
 #endif
+
+TEST(test_evio_loop_uring_requires_single_mmap)
+{
+    // GCOVR_EXCL_START
+    if (!evio_test_uring_supported()) {
+        TEST_SKIPF("io_uring unavailable");
+    }
+    // GCOVR_EXCL_STOP
+
+    evio_uring_test_probe_reset();
+    evio_uring_probe_injection.main_setup_disabled_features = IORING_FEAT_SINGLE_MMAP;
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    assert_non_null(loop);
+    bool setup_succeeded = evio_uring_probe_injection.main_setup_succeeded;
+    uint32_t features = evio_uring_probe_injection.main_setup_features;
+    unsigned int mmap_calls = evio_uring_probe_injection.mmap_call;
+    bool has_uring = loop->iou != NULL;
+    evio_uring_test_probe_reset();
+
+    assert_pipe_read(loop);
+    evio_loop_free(loop);
+    assert_true(setup_succeeded);
+    assert_false(features & IORING_FEAT_SINGLE_MMAP);
+    assert_int_equal(mmap_calls, 0);
+    assert_false(has_uring);
+}
 
 TEST(test_evio_loop_uring_setup_einval_retry)
 {
