@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <sched.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 
@@ -540,12 +541,19 @@ int main(void)
     unsigned int watchers = env_u32("EVIO_BENCH_MT_WATCHERS", DEF_WATCHERS, MAX_WATCHERS);
     unsigned int iterations = env_u32("EVIO_BENCH_MT_ITERS", DEF_ITERATIONS, MAX_ITERATIONS);
 
-    unsigned int ncpu = (unsigned int)sysconf(_SC_NPROCESSORS_ONLN);
-    if (!ncpu) {
+    cpu_set_t cpus;
+    long ncpu = 0;
+    if (sched_getaffinity(0, sizeof(cpus), &cpus) == 0) {
+        ncpu = CPU_COUNT(&cpus);
+    }
+    if (ncpu < 1) {
+        ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+    }
+    if (ncpu < 1) {
         ncpu = 1;
     }
 
-    const unsigned int max_threads = 2 * (ncpu < 8 ? ncpu : 8);
+    const unsigned int max_threads = 2 * (unsigned int)(ncpu < 8 ? ncpu : 8);
 
     const unsigned int thread_counts[] = { 1, 2, 4, 8, 16 };
 
