@@ -204,28 +204,27 @@ void evio_poll_wait(evio_loop *loop, int timeout)
                                    loop->events.ptr,
                                    loop->events.count,
                                    timeout, &loop->sigmask);
-        if (__evio_likely(events_count >= 0)) {
+        if (__evio_unlikely(events_count < 0)) {
+            int err = errno;
+            if (err != EINTR) {
+                EVIO_ABORT("epoll_pwait() failed, error %d: %s\n", err, EVIO_STRERROR(err));
+            }
+        } else if (events_count || timeout <= 0) {
             break;
         }
 
-        int err = errno;
-        if (err == EINTR) {
-            if (timeout > 0) {
-                evio_update_time(loop);
-                const evio_time elapsed = loop->time - time;
-                if (elapsed >= remaining) {
-                    events_count = 0;
-                    break;
-                }
-
-                remaining -= elapsed;
-                time = loop->time;
-                timeout = (int)(1 + ((remaining - 1) / EVIO_TIME_PER_MSEC));
+        if (timeout > 0) {
+            evio_update_time(loop);
+            const evio_time elapsed = loop->time - time;
+            if (elapsed >= remaining) {
+                events_count = 0;
+                break;
             }
-            continue;
-        }
 
-        EVIO_ABORT("epoll_pwait() failed, error %d: %s\n", err, EVIO_STRERROR(err));
+            remaining -= elapsed;
+            time = loop->time;
+            timeout = (int)(1 + ((remaining - 1) / EVIO_TIME_PER_MSEC));
+        }
     }
 
     for (size_t i = 0; i < (size_t)events_count; ++i) {

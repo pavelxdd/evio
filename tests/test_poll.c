@@ -407,7 +407,9 @@ typedef struct {
     bool active;
     evio_time time;
     evio_time interrupt_delay;
+    evio_time empty_delay;
     size_t interrupts;
+    size_t empty_results;
     size_t calls;
 } poll_wait_state;
 
@@ -426,6 +428,12 @@ int __wrap_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
         poll_wait_inject.time += poll_wait_inject.interrupt_delay;
         errno = EINTR;
         return -1;
+    }
+
+    if (poll_wait_inject.empty_results) {
+        --poll_wait_inject.empty_results;
+        poll_wait_inject.time += poll_wait_inject.empty_delay;
+        return 0;
     }
 
     poll_wait_inject.time += EVIO_TIME_FROM_MSEC(timeout);
@@ -542,6 +550,71 @@ TEST(test_evio_time_refresh_after_poll)
     assert_int_equal(prepare_data.after, EVIO_TIME_FROM_SEC(3));
     assert_int_equal(first_time, EVIO_TIME_FROM_SEC(3));
     assert_int_equal(second_time, EVIO_TIME_FROM_SEC(5));
+}
+
+TEST(test_evio_poll_wait_early_timeout)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    poll_wait_inject = (poll_wait_state) {
+        .active = true,
+        .time = EVIO_TIME_FROM_SEC(1),
+        .empty_delay = EVIO_TIME_FROM_MSEC(9),
+        .empty_results = 1,
+    };
+    evio_set_clockid(loop, CLOCK_MONOTONIC);
+
+    evio_timer timer;
+    evio_timer_init(&timer, generic_cb, 0);
+    timer.data = &data;
+    evio_timer_start(loop, &timer, EVIO_TIME_FROM_MSEC(10));
+
+    int ret = evio_run(loop, EVIO_RUN_ONCE);
+    poll_wait_inject.active = false;
+
+    const evio_time elapsed = evio_get_time(loop) - EVIO_TIME_FROM_SEC(1);
+    evio_timer_stop(loop, &timer);
+    evio_loop_free(loop);
+
+    assert_int_equal(data.called, 1);
+    assert_int_equal(data.emask, EVIO_TIMER);
+    assert_int_equal(elapsed, EVIO_TIME_FROM_MSEC(10));
+    assert_int_equal(ret, 0);
+    assert_int_equal(poll_wait_inject.calls, 2);
+}
+
+TEST(test_evio_poll_wait_empty_nowait)
+{
+    generic_cb_data data = { 0 };
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    assert_non_null(loop);
+
+    poll_wait_inject = (poll_wait_state) {
+        .active = true,
+        .time = EVIO_TIME_FROM_SEC(1),
+        .empty_delay = EVIO_TIME_FROM_MSEC(9),
+        .empty_results = 1,
+    };
+    evio_set_clockid(loop, CLOCK_MONOTONIC);
+
+    evio_timer timer;
+    evio_timer_init(&timer, generic_cb, 0);
+    timer.data = &data;
+    evio_timer_start(loop, &timer, EVIO_TIME_FROM_MSEC(10));
+
+    int ret = evio_run(loop, EVIO_RUN_NOWAIT);
+    poll_wait_inject.active = false;
+
+    const evio_time elapsed = evio_get_time(loop) - EVIO_TIME_FROM_SEC(1);
+    evio_timer_stop(loop, &timer);
+    evio_loop_free(loop);
+
+    assert_int_equal(data.called, 0);
+    assert_int_equal(elapsed, EVIO_TIME_FROM_MSEC(9));
+    assert_int_equal(ret, 1);
+    assert_int_equal(poll_wait_inject.calls, 1);
 }
 
 TEST(test_evio_poll_wait_eintr_timeout)
