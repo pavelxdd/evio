@@ -1129,6 +1129,53 @@ static evio_rx_observable *project_failure(void *ctx, const void *value)
     return result;
 }
 
+static int first_value(void *ctx, void *out, const void *const *values, size_t count)
+{
+    *(int *)out = *(const int *)values[0];
+    return 0;
+}
+
+TEST(test_evio_rx_switch_map_restarts_after_nested_prepare_failure)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    failure_project failure = { .mode = FAILURE_PREPARE };
+    failure_capture capture = { .project = &failure };
+    evio_rx_observable *input = evio_rx_observable_new(&int_type, failure_source,
+                                                       (evio_rx_capture) { .data = &capture });
+    evio_rx_observable *latest = evio_rx_combine_latest(&input, 1, (evio_rx_combiner) {
+        .type = &int_type, .cb = first_value,
+    });
+    evio_rx_observable *inner = evio_rx_merge(&latest, 1);
+    int value = 42;
+    evio_rx_observable *outer = evio_rx_from_array(&int_type, &value, 1);
+    size_t calls = 0;
+    ref_project project = { .inner = inner, .calls = &calls };
+    evio_rx_observable *switched = evio_rx_switch_map(outer, (evio_rx_project) {
+        .type = &int_type, .cb = project_ref, .capture = { .data = &project },
+    });
+    flat_log log = {0};
+    log.subscription = evio_rx_subscription_new(loop, switched, flat_observer(&log), 1);
+    evio_rx_subscription_start(log.subscription);
+    assert_true(evio_rx_subscription_is_closed(log.subscription));
+    assert_int_equal(log.error, EACCES);
+    assert_int_equal(log.count, 0);
+    assert_int_equal(log.completed, 0);
+
+    project.inner = outer;
+    log.error = 0;
+    evio_rx_subscription_restart(log.subscription);
+    assert_int_equal(log.count, 1);
+    assert_int_equal(log.values[0], 42);
+    assert_int_equal(log.completed, 1);
+    evio_rx_subscription_free(log.subscription);
+    evio_rx_observable_free(switched);
+    evio_rx_observable_free(outer);
+    evio_rx_observable_free(inner);
+    evio_rx_observable_free(latest);
+    evio_rx_observable_free(input);
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_rx_switch_map_projector_null_errno_is_reset_and_normalized)
 {
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);

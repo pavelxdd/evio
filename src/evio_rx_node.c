@@ -567,21 +567,31 @@ static void node_rewind(evio_rx_node *node)
     node->closed = false;
 }
 
-// Frees the subtrees created during the run and rewinds the others, children first.
-static void tree_reset(evio_rx_subscription *root)
+// An owned child is discarded as a unit, even if its initialization failed.
+static evio_rx_node *first_reset_node(evio_rx_node *node)
 {
-    evio_rx_node *top = root->sink.child;
-    for (evio_rx_node *node = first_leaf(top); node;) {
-        evio_rx_node *next = next_leaf(node, top);
-        if (node->owns_source) {
+    while (node->child && !node->owns_source) {
+        node = node->child;
+    }
+    return node;
+}
+
+static void tree_rewind(evio_rx_node *top, bool retire)
+{
+    evio_rx_node *node = top->child ? first_reset_node(top->child) : top;
+    while (node != top) {
+        evio_rx_node *next = node->next ? first_reset_node(node->next) : node->parent;
+        if (!node->owns_source) {
+            node_rewind(node);
+        } else if (retire) {
+            evio_rx_node_retire(node);
+        } else {
             node_unlink(node);
             tree_free(node);
-        } else {
-            node_rewind(node);
         }
         node = next;
     }
-    root->tree_reset = true;
+    node_rewind(top);
 }
 
 bool evio_rx_node_rewind(evio_rx_node *top)
@@ -590,15 +600,7 @@ bool evio_rx_node_rewind(evio_rx_node *top)
     if (top->root->queue_count || is_active(top)) {
         return false;
     }
-    for (evio_rx_node *node = first_leaf(top); node;) {
-        evio_rx_node *next = next_leaf(node, top);
-        if (node != top && node->owns_source) {
-            evio_rx_node_retire(node);
-        } else {
-            node_rewind(node);
-        }
-        node = next;
-    }
+    tree_rewind(top, true);
     return true;
 }
 
@@ -669,7 +671,8 @@ static void settle_run(evio_rx_subscription *root)
             break;
         }
         if (!root->tree_reset) {
-            tree_reset(root);
+            tree_rewind(root->sink.child, false);
+            root->tree_reset = true;
         }
         if (!root->restart) {
             break;
