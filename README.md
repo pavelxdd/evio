@@ -8,7 +8,7 @@
 
 `evio` is a low-level event loop library for C, built for Linux. It relies on `epoll` and `eventfd` and is not intended to be portable.
 
-`EVIO_FLAG_URING` enables an `io_uring` fast path for poll watcher churn (the loop still waits via `epoll`).
+`EVIO_FLAG_URING` requests an `io_uring` fast path for poll watcher churn (the loop still waits via `epoll`). The caller is responsible for choosing it for the target kernel, architecture and sandbox policy. There are no internal kernel-version or architecture filters; build-time API checks and runtime probing determine technical availability.
 
 ## Building
 
