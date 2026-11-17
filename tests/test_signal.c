@@ -43,6 +43,131 @@ static void generic_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 static void dummy_cb(evio_loop *loop, evio_base *base, evio_mask emask) {}
 // GCOVR_EXCL_STOP
 
+static void previous_signal_handler(int signum) {}
+
+typedef struct {
+    struct sigaction original;
+    struct sigaction expected;
+    evio_loop *loop;
+    evio_signal sig[2];
+    generic_cb_data data;
+} signal_action_state;
+
+static int signal_action_teardown(void **state)
+{
+    signal_action_state *s = *state;
+    if (!s) {
+        return 0;
+    }
+
+    if (s->loop) {
+        evio_loop_free(s->loop);
+    }
+    int rc = sigaction(SIGUSR1, &s->original, NULL);
+    free(s);
+    *state = NULL;
+    return rc;
+}
+
+static int signal_action_setup(void **state)
+{
+    signal_action_state *s = calloc(1, sizeof(*s));
+    if (!s) {
+        return -1;
+    }
+
+    struct sigaction action = {
+        .sa_handler = previous_signal_handler,
+        .sa_flags = SA_RESTART,
+    };
+    sigemptyset(&action.sa_mask);
+    sigaddset(&action.sa_mask, SIGUSR2);
+    if (sigaction(SIGUSR1, &action, &s->original)) {
+        free(s);
+        return -1;
+    }
+    *state = s;
+
+    if (sigaction(SIGUSR1, NULL, &s->expected)) {
+        signal_action_teardown(state);
+        return -1;
+    }
+
+    s->loop = evio_loop_new(EVIO_FLAG_NONE);
+    if (!s->loop) {
+        signal_action_teardown(state);
+        return -1;
+    }
+
+    for (size_t i = 0; i < sizeof(s->sig) / sizeof(s->sig[0]); ++i) {
+        evio_signal_init(&s->sig[i], generic_cb, SIGUSR1);
+        s->sig[i].data = &s->data;
+    }
+    return 0;
+}
+
+static void assert_signal_action_equal(const struct sigaction *actual, const struct sigaction *expected)
+{
+    assert_true(actual->sa_handler == expected->sa_handler);
+    assert_int_equal(actual->sa_flags, expected->sa_flags);
+    for (int signum = 1; signum < NSIG; ++signum) {
+        assert_int_equal(sigismember(&actual->sa_mask, signum), sigismember(&expected->sa_mask, signum));
+    }
+}
+
+TEST(test_evio_signal_restore_action_on_stop,
+     .setup_func    = signal_action_setup,
+     .teardown_func = signal_action_teardown)
+{
+    signal_action_state *s = *state;
+    evio_signal_start(s->loop, &s->sig[0]);
+
+    struct sigaction installed;
+    assert_int_equal(sigaction(SIGUSR1, NULL, &installed), 0);
+
+    assert_int_equal(raise(SIGUSR1), 0);
+    evio_signal_start(s->loop, &s->sig[0]);
+    evio_run(s->loop, EVIO_RUN_NOWAIT);
+    evio_invoke_pending(s->loop);
+    assert_int_equal(s->data.called, 1);
+
+    evio_signal_start(s->loop, &s->sig[1]);
+    evio_signal_stop(s->loop, &s->sig[0]);
+
+    struct sigaction active;
+    assert_int_equal(sigaction(SIGUSR1, NULL, &active), 0);
+    assert_signal_action_equal(&active, &installed);
+
+    evio_signal_stop(s->loop, &s->sig[1]);
+
+    struct sigaction restored;
+    assert_int_equal(sigaction(SIGUSR1, NULL, &restored), 0);
+    assert_signal_action_equal(&restored, &s->expected);
+    assert_int_equal(raise(SIGUSR1), 0);
+}
+
+TEST(test_evio_signal_restore_action_on_free,
+     .setup_func    = signal_action_setup,
+     .teardown_func = signal_action_teardown)
+{
+    signal_action_state *s = *state;
+    evio_signal_start(s->loop, &s->sig[0]);
+    assert_int_equal(raise(SIGUSR1), 0);
+    evio_run(s->loop, EVIO_RUN_NOWAIT);
+    assert_int_equal(s->data.called, 0);
+    assert_int_equal(evio_pending_count(s->loop), 1);
+
+    evio_loop_free(s->loop);
+    s->loop = NULL;
+    assert_int_equal(s->sig[0].pending, 0);
+    assert_int_equal(s->data.called, 0);
+
+    struct sigaction restored;
+    assert_int_equal(sigaction(SIGUSR1, NULL, &restored), 0);
+    assert_signal_action_equal(&restored, &s->expected);
+    assert_int_equal(raise(SIGUSR1), 0);
+}
+
 TEST(test_evio_signal)
 {
     generic_cb_data data = { 0 };

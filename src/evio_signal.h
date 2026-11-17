@@ -43,6 +43,9 @@ void evio_signal_init(evio_signal *w, evio_cb cb, int signum)
 
 /**
  * @brief Starts a signal watcher, making it active in the event loop.
+ * @details The first watcher for a signal saves and replaces its process-wide action.
+ * The saved action is restored when the last watcher stops or the loop is freed.
+ * Application code must not replace the action while this signal is watched.
  * @param loop The event loop.
  * @param w The signal watcher to start.
  * @warning One process-wide handler per signal number. Starting the same signal
