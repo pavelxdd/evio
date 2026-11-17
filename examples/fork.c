@@ -326,7 +326,11 @@ int main(int argc, char *argv[])
     }
 
     int on = 1;
-    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(int));
+    if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) < 0) {
+        perror("setsockopt SO_REUSEADDR");
+        close(listen_fd);
+        return EXIT_FAILURE;
+    }
 
     struct sockaddr_in serv_addr = {
         .sin_family = AF_INET,
