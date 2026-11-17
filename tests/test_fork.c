@@ -46,6 +46,8 @@ typedef struct {
     int fail_fork;
     int fail_pidfd;
     bool fail_calloc;
+    bool deny_pidfd_signal;
+    bool deny_kill;
     atomic_bool injected;
 } fork_shared;
 
@@ -198,6 +200,10 @@ static long fork_example_syscall(long number, ...)
             } else if (signum == SIGKILL) {
                 atomic_fetch_add(&fork_state->kill_calls[i], 1);
             }
+            if (fork_state->deny_pidfd_signal) {
+                errno = EPERM;
+                return -1;
+            }
             return syscall(number, fd, signum, info, flags);
         }
     }
@@ -211,6 +217,10 @@ static int fork_example_signal(pid_t pid, int signum)
             atomic_fetch_add(&fork_state->raw_calls[i], 1);
             if (signum == SIGKILL) {
                 atomic_fetch_add(&fork_state->kill_calls[i], 1);
+            }
+            if (fork_state->deny_kill) {
+                errno = EPERM;
+                return -1;
             }
             // A stale numeric PID must never reach kill() during regression checks.
             return syscall(__NR_pidfd_send_signal, fork_handles[i], signum, NULL, 0);
@@ -404,7 +414,7 @@ static void fork_receive(fork_fixture *f, int count)
     }
 }
 
-static void fork_finish(fork_fixture *f, int expected)
+static void fork_wait_parent(fork_fixture *f, int expected)
 {
     fork_wait_event(f->parent_fd, POLLIN);
     int status;
@@ -412,6 +422,11 @@ static void fork_finish(fork_fixture *f, int expected)
     f->parent = 0;
     assert_true(WIFEXITED(status));
     assert_int_equal(WEXITSTATUS(status), expected);
+}
+
+static void fork_finish(fork_fixture *f, int expected)
+{
+    fork_wait_parent(f, expected);
     for (int i = 0; i < NUM_CHILDREN; ++i) {
         pid_t pid = atomic_load(&f->shared->children[i]);
         if (pid > 0) {
@@ -442,6 +457,40 @@ TEST(test_evio_fork_reaped_child_signal, .setup_func = fork_setup, .teardown_fun
     }
     assert_int_equal(atomic_load(&f->shared->term_calls[0]), 0);
     assert_int_equal(atomic_load(&f->shared->term_calls[1]), 1);
+}
+
+static void fork_shutdown_denied(fork_fixture *f, bool deny_kill)
+{
+    if (f->pidfd_unavailable) {
+        TEST_SKIPF("pidfd syscalls unavailable");
+    }
+    f->shared->deny_pidfd_signal = true;
+    f->shared->deny_kill = deny_kill;
+    fork_start(f);
+    fork_receive(f, NUM_CHILDREN);
+    assert_int_equal(syscall(__NR_pidfd_send_signal, f->parent_fd, SIGINT, NULL, 0), 0);
+    if (deny_kill) {
+        fork_wait_parent(f, EXIT_FAILURE);
+    } else {
+        for (int i = 0; i < NUM_CHILDREN; ++i) {
+            assert_int_equal(syscall(__NR_pidfd_send_signal, f->children[i], SIGCONT, NULL, 0), 0);
+        }
+        fork_finish(f, EXIT_SUCCESS);
+    }
+    for (int i = 0; i < NUM_CHILDREN; ++i) {
+        assert_int_equal(atomic_load(&f->shared->term_calls[i]), 1);
+        assert_int_equal(atomic_load(&f->shared->raw_calls[i]), 1);
+    }
+}
+
+TEST(test_evio_fork_pidfd_signal_denied, .setup_func = fork_setup, .teardown_func = fork_teardown)
+{
+    fork_shutdown_denied(*state, false);
+}
+
+TEST(test_evio_fork_both_signals_denied, .setup_func = fork_setup, .teardown_func = fork_teardown)
+{
+    fork_shutdown_denied(*state, true);
 }
 
 static void fork_failed_start(fork_fixture *f, int children)

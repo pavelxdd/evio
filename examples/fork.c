@@ -204,24 +204,41 @@ static int pidfd_open(pid_t pid, unsigned int flags)
     return syscall(__NR_pidfd_open, pid, flags);
 }
 
+static int signal_child(child_info *child, int signum)
+{
+    if (child->pidfd_w.fd >= 0 &&
+        syscall(__NR_pidfd_send_signal, child->pidfd_w.fd, signum, NULL, 0) == 0) {
+        return 0;
+    }
+
+    // The parent is the sole reaper; a live child's PID cannot be reused before waitpid.
+    pid_t rc;
+    do {
+        rc = waitpid(child->pid, NULL, WNOHANG);
+    } while (rc < 0 && errno == EINTR);
+    if (rc == 0) {
+        return kill(child->pid, signum);
+    }
+    if (rc > 0 || errno == ECHILD) {
+        child->pid = 0;
+        return 0;
+    }
+    return -1;
+}
+
 static void parent_cleanup(evio_loop *loop, parent_data *pdata, int signum)
 {
+    int wait_options[NUM_CHILDREN] = { 0 };
     for (int i = 0; i < NUM_CHILDREN; ++i) {
         child_info *child = &pdata->children[i];
         if (child->pid <= 0) {
             continue;
         }
 
-        int rc;
-        if (child->pidfd_w.fd >= 0) {
-            rc = syscall(__NR_pidfd_send_signal, child->pidfd_w.fd, signum, NULL, 0);
-        } else {
-            // No wait has run for a child without a pidfd.
-            rc = kill(child->pid, signum);
-        }
-        if (rc < 0 && errno != ESRCH) {
+        if (signal_child(child, signum) < 0) {
             perror("signal child");
             pdata->status = EXIT_FAILURE;
+            wait_options[i] = WNOHANG;
         }
     }
 
@@ -230,7 +247,7 @@ static void parent_cleanup(evio_loop *loop, parent_data *pdata, int signum)
         if (child->pid > 0) {
             pid_t rc;
             do {
-                rc = waitpid(child->pid, NULL, 0);
+                rc = waitpid(child->pid, NULL, wait_options[i]);
             } while (rc < 0 && errno == EINTR);
             if (rc < 0 && errno != ECHILD) {
                 perror("waitpid");
@@ -280,25 +297,9 @@ static void child_exit_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 // Callback for when the parent process catches SIGINT
 static void parent_signal_cb(evio_loop *loop, evio_base *base, evio_mask emask)
 {
-    parent_data *pdata = evio_get_userdata(loop);
     printf("\n[Parent] Caught SIGINT, signaling children to terminate.\n");
-
-    for (int i = 0; i < NUM_CHILDREN; ++i) {
-        child_info *child = &pdata->children[i];
-        if (child->pidfd_w.fd < 0) {
-            continue;
-        }
-        if (syscall(__NR_pidfd_send_signal, child->pidfd_w.fd, SIGTERM, NULL, 0) < 0 &&
-            errno != ESRCH) {
-            perror("pidfd_send_signal");
-            pdata->status = EXIT_FAILURE;
-            evio_break(loop, EVIO_BREAK_ALL);
-            return;
-        }
-    }
-
-    // One-shot.
     evio_signal_stop(loop, (evio_signal *)base);
+    evio_break(loop, EVIO_BREAK_ALL);
 }
 
 int main(int argc, char *argv[])
