@@ -215,27 +215,22 @@ TEST(test_evio_signal_process_pending_race)
 
 typedef struct {
     pthread_barrier_t *barrier;
-    evio_loop *loop1;
-    evio_loop *loop2;
-    evio_signal *sig1;
-    evio_signal *sig2;
+    int rc;
 } stale_status_thread_arg;
 
-// This thread function simulates a race where a signal is handled, but before
-// it's processed by the loop, the watcher is moved to another loop.
 static void *stale_status_thread(void *arg)
 {
     stale_status_thread_arg *t = arg;
 
-    // Wait for main thread to set up watcher on loop1.
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGUSR1);
+    t->rc = pthread_sigmask(SIG_UNBLOCK, &set, NULL);
+    if (!t->rc) {
+        t->rc = raise(SIGUSR1);
+    }
+
     pthread_barrier_wait(t->barrier);
-
-    // Raise the signal. The handler runs, sets status=1 for SIGUSR1, and wakes up loop1.
-    raise(SIGUSR1);
-
-    // Wait for main thread to stop the watcher on loop1 and restart on loop2.
-    pthread_barrier_wait(t->barrier);
-
     return NULL;
 }
 
@@ -258,15 +253,8 @@ TEST(test_evio_signal_process_pending_stale_status)
 
     stale_status_thread_arg arg = {
         .barrier = &barrier,
-        .loop1 = loop1,
-        .loop2 = loop2,
-        .sig1 = &sig1,
     };
 
-    // Block SIGUSR1 in the main thread to avoid a race where the signal is
-    // delivered after its handler has been uninstalled by evio_signal_stop.
-    // The raiser thread will inherit the default (unblocked) mask and can
-    // receive and handle the signal.
     sigset_t set;
     sigemptyset(&set);
     sigaddset(&set, SIGUSR1);
@@ -280,26 +268,16 @@ TEST(test_evio_signal_process_pending_stale_status)
     pthread_t thread;
     assert_int_equal(pthread_create(&thread, NULL, stale_status_thread, &arg), 0);
 
-    // Main thread: Signal thread to raise the signal.
+    // The signal handler must finish before the watcher moves to loop2.
     pthread_barrier_wait(&barrier);
 
-    // Main thread: Immediately stop watcher on loop1 and restart on loop2.
-    // The signal status for SIGUSR1 is still 1, but it's now owned by loop2.
+    bool signal_pending = atomic_load_explicit(&loop1->signal_pending.value, memory_order_acquire);
+
     evio_signal_stop(loop1, &sig1);
     evio_signal_start(loop2, &sig1);
 
-    // Main thread: Signal thread that we are done moving the watcher.
-    pthread_barrier_wait(&barrier);
-
-    // Run loop1. It was woken up by the signal, but when it processes pending
-    // signals, it will see that the watcher for SIGUSR1 now belongs to loop2.
-    // It will hit the `atomic_exchange_explicit(&sig->status.value, 0, ...)`
-    // but the inner `for` loop will not run because `sig->list.count` is 0 for loop1.
     evio_run(loop1, EVIO_RUN_ONCE);
     evio_invoke_pending(loop1);
-
-    // No callback was called, as the event was for a stale watcher.
-    assert_int_equal(data.called, 0);
 
     assert_int_equal(pthread_join(thread, NULL), 0);
     evio_loop_free(loop1);
@@ -308,6 +286,10 @@ TEST(test_evio_signal_process_pending_stale_status)
 
     // Restore the original signal mask.
     pthread_sigmask(SIG_SETMASK, &oldset, NULL);
+
+    assert_int_equal(arg.rc, 0);
+    assert_true(signal_pending);
+    assert_int_equal(data.called, 0);
 }
 
 TEST(test_evio_signal_pending_another_signal)
