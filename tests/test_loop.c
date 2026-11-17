@@ -161,11 +161,19 @@ TEST(test_evio_run_timeout_pending_branch)
     evio_run(loop, EVIO_RUN_ONCE);
     atomic_store_explicit(&evio_test_loop_timeout_hook, 0, memory_order_release);
 
-    assert_int_equal(data.called, 0);
-    assert_true(atomic_load_explicit(&evio_test_loop_observed_timeout, memory_order_relaxed) > 0);
+    uint64_t val = 0;
+    ssize_t res = read(loop->event.fd, &val, sizeof(val));
+    int err = errno;
+    bool pending = atomic_load_explicit(&loop->event_pending.value, memory_order_relaxed);
 
     evio_timer_stop(loop, &tm);
     evio_loop_free(loop);
+
+    assert_int_equal(data.called, 0);
+    assert_true(atomic_load_explicit(&evio_test_loop_observed_timeout, memory_order_relaxed) > 0);
+    assert_false(pending);
+    assert_int_equal(res, -1);
+    assert_int_equal(err, EAGAIN);
 }
 
 TEST(test_evio_loop_new_fail)

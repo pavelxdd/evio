@@ -232,16 +232,18 @@ int evio_run(evio_loop *loop, int flags)
 
         evio_poll_update(loop);
 
-        atomic_store_explicit(&loop->eventfd_allow.value, 1, memory_order_release);
-
         int timeout = ((flags & EVIO_RUN_NOWAIT) || once_pending) ? 0 : evio_timeout(loop);
 
 #ifdef EVIO_TESTING
         evio_test_loop_after_timeout(loop, &timeout);
 #endif
 
-        if (timeout && atomic_load_explicit(&loop->event_pending.value, memory_order_acquire)) {
-            timeout = 0;
+        if (timeout) {
+            // SC ordering forbids both sides from observing the old flags.
+            atomic_store_explicit(&loop->eventfd_allow.value, 1, memory_order_seq_cst);
+            if (atomic_load_explicit(&loop->event_pending.value, memory_order_seq_cst)) {
+                timeout = 0;
+            }
         }
 
         evio_poll_wait(loop, timeout);

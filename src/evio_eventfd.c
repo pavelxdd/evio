@@ -85,11 +85,11 @@ static void evio_eventfd_notify(int fd)
 
 void evio_eventfd_write(evio_loop *loop)
 {
-    if (atomic_exchange_explicit(&loop->event_pending.value, 1, memory_order_acq_rel)) {
+    if (atomic_exchange_explicit(&loop->event_pending.value, 1, memory_order_seq_cst)) {
         return;
     }
 
-    if (!atomic_load_explicit(&loop->eventfd_allow.value, memory_order_acquire)) {
+    if (!atomic_load_explicit(&loop->eventfd_allow.value, memory_order_seq_cst)) {
         return;
     }
 
