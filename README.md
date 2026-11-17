@@ -107,7 +107,7 @@ int main(void)
 }
 ```
 
-## Experimental Rx API
+## Rx API
 
 Reactive streams on top of the loop: sources, operators, Subjects and timers.
 Include `<evio/evio_rx.h>` explicitly; `<evio/evio.h>` does not include it.

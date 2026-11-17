@@ -2,7 +2,7 @@
 
 /**
  * @file evio_rx.h
- * @brief Experimental Rx API umbrella header.
+ * @brief Rx API umbrella header.
  *
  * Not included by `evio.h`. All Rx objects are loop-thread-only. Loops outlive
  * their subscriptions, Subjects and descriptions retaining Subjects.
