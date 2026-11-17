@@ -191,6 +191,83 @@ static void bench_chain(evio_loop *loop)
     evio_free(values);
 }
 
+static const evio_rx_type bool_type = {
+    .size = sizeof(bool), .alignment = alignof(bool),
+};
+
+static int above_threshold(void *ctx, void *out, const void *value)
+{
+    *(bool *)out = *(const uint64_t *)value > 100;
+    return 0;
+}
+
+static bool same_state(void *ctx, const void *previous, const void *value)
+{
+    return *(const bool *)previous == *(const bool *)value;
+}
+
+[[gnu::noinline]]
+static void threshold_next(void *ctx, const void *value)
+{
+    size_t *count = ctx;
+    if (*(const bool *)value != (*count & 1)) {
+        abort();
+    }
+    ++*count;
+}
+
+static void bench_threshold(evio_loop *loop, const char *name, size_t run_length)
+{
+    uint64_t *values = evio_malloc(NUM_PUBLISH * sizeof(*values));
+    for (size_t i = 0; i < NUM_PUBLISH; ++i) {
+        values[i] = (i / run_length) & 1 ? 110 : 80;
+    }
+    size_t expected = 1 + (NUM_PUBLISH - 1) / run_length;
+    size_t count = 0;
+    bool previous = false;
+    uint64_t start = get_time_ns();
+    for (size_t i = 0; i < NUM_PUBLISH; ++i) {
+        bool above = values[i] > 100;
+        if (!i || above != previous) {
+            threshold_next(&count, &above);
+            previous = above;
+        }
+    }
+    uint64_t elapsed = get_time_ns() - start;
+    if (count != expected) {
+        abort();
+    }
+    print_benchmark(name, "native", elapsed, NUM_PUBLISH);
+
+    count = 0;
+    evio_rx_subject *subject = evio_rx_subject_new(loop, &evio_rx_uint64_type, 1);
+    evio_rx_observable *source = evio_rx_from_subject(subject);
+    evio_rx_observable *mapped = evio_rx_map(source, &bool_type, above_threshold,
+                                             (evio_rx_capture) {0});
+    evio_rx_observable *changes = evio_rx_distinct_until_changed(mapped, same_state,
+                                                                 (evio_rx_capture) {0});
+    evio_rx_observer observer = { .next = threshold_next, .ctx = &count };
+    evio_rx_subscription *sub = evio_rx_subscription_new(loop, changes, observer, 1);
+    evio_rx_subscription_start(sub);
+    start = get_time_ns();
+    for (size_t i = 0; i < NUM_PUBLISH; ++i) {
+        if (evio_rx_subject_next(subject, &values[i])) {
+            abort();
+        }
+    }
+    elapsed = get_time_ns() - start;
+    if (count != expected || evio_rx_subscription_is_closed(sub)) {
+        abort();
+    }
+    print_benchmark(name, "rx", elapsed, NUM_PUBLISH);
+    evio_rx_subscription_free(sub);
+    evio_rx_observable_free(changes);
+    evio_rx_observable_free(mapped);
+    evio_rx_observable_free(source);
+    evio_rx_subject_free(subject);
+    evio_free(values);
+}
+
 // --- subject fan-out to 8 subscribers ---
 static void bench_subject(evio_loop *loop)
 {
@@ -634,6 +711,8 @@ int main(void)
 
     bench_map(loop);
     bench_chain(loop);
+    bench_threshold(loop, "rx_threshold_sparse", 64);
+    bench_threshold(loop, "rx_threshold_alternating", 1);
     bench_subject(loop);
     bench_fan_in(loop, false);
     bench_fan_in(loop, true);
