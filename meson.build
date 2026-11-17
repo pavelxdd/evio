@@ -359,6 +359,7 @@ if get_option('benchmarks')
     benchmarks = [
         'poll',
         'timer',
+        'timer_latency',
         'signal',
         'async',
         'idle',
