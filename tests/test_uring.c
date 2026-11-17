@@ -21,8 +21,11 @@ static struct {
     unsigned int mmap_fail_at;
     int mmap_err;
 
-    bool setup_fail;
+    unsigned int setup_fail_count;
+    unsigned int setup_fail_entries;
     int setup_err;
+    unsigned int main_setup_calls;
+    uint32_t main_setup_flags;
 
     bool epoll_fail;
     int epoll_err;
@@ -81,7 +84,8 @@ void evio_uring_test_probe_fail_mmap_at(unsigned int call, int err)
 
 void evio_uring_test_probe_fail_setup_once(int err)
 {
-    evio_uring_probe_injection.setup_fail = true;
+    evio_uring_probe_injection.setup_fail_count = 1;
+    evio_uring_probe_injection.setup_fail_entries = 0;
     evio_uring_probe_injection.setup_err = err;
 }
 
@@ -122,8 +126,15 @@ void evio_uring_test_probe_force_cqe_res_once(int res)
 
 int evio_test_uring_setup(unsigned int entries, struct io_uring_params *params)
 {
-    if (evio_uring_probe_injection.setup_fail) {
-        evio_uring_probe_injection.setup_fail = false;
+    if (entries == EVIO_URING_EVENTS) {
+        evio_uring_probe_injection.main_setup_calls++;
+        evio_uring_probe_injection.main_setup_flags = params->flags;
+    }
+
+    if (evio_uring_probe_injection.setup_fail_count &&
+        (!evio_uring_probe_injection.setup_fail_entries ||
+         entries == evio_uring_probe_injection.setup_fail_entries)) {
+        evio_uring_probe_injection.setup_fail_count--;
         if (evio_uring_probe_injection.setup_err < 0) {
             return evio_uring_probe_injection.setup_err;
         }
@@ -294,25 +305,8 @@ static void read_and_count_cb(evio_loop *loop, evio_base *base, evio_mask emask)
     generic_cb(loop, base, emask);
 }
 
-TEST(test_evio_loop_uring)
+static void assert_pipe_read(evio_loop *loop)
 {
-    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
-    assert_non_null(loop);
-
-    // Just run it once to make sure nothing crashes.
-    evio_run(loop, EVIO_RUN_NOWAIT);
-    evio_loop_free(loop);
-}
-
-TEST(test_evio_loop_uring_fallback)
-{
-    evio_uring_test_probe_reset();
-    evio_uring_test_probe_fail_setup_once(ENOSYS);
-    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
-    evio_uring_test_probe_reset();
-    assert_non_null(loop);
-    assert_null(loop->iou);
-
     int fds[2] = { -1, -1 };
     assert_int_equal(pipe(fds), 0);
     generic_cb_data data = { 0 };
@@ -333,6 +327,28 @@ TEST(test_evio_loop_uring_fallback)
     evio_poll_stop(loop, &io);
     close(fds[0]);
     close(fds[1]);
+}
+
+TEST(test_evio_loop_uring)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    assert_non_null(loop);
+
+    // Just run it once to make sure nothing crashes.
+    evio_run(loop, EVIO_RUN_NOWAIT);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_loop_uring_fallback)
+{
+    evio_uring_test_probe_reset();
+    evio_uring_test_probe_fail_setup_once(ENOSYS);
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    evio_uring_test_probe_reset();
+    assert_non_null(loop);
+    assert_null(loop->iou);
+
+    assert_pipe_read(loop);
     evio_loop_free(loop);
 }
 
@@ -1212,6 +1228,75 @@ static bool evio_test_uring_supported(void)
     return true;
 }
 
+TEST(test_evio_loop_uring_setup_einval_retry)
+{
+    // GCOVR_EXCL_START
+    if (!evio_test_uring_supported()) {
+        TEST_SKIPF("io_uring unavailable");
+    }
+    // GCOVR_EXCL_STOP
+
+    evio_uring_test_probe_reset();
+    evio_uring_test_probe_fail_setup_once(EINVAL);
+    evio_uring_probe_injection.setup_fail_entries = EVIO_URING_EVENTS;
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    assert_non_null(loop);
+    assert_non_null(loop->iou);
+    assert_int_equal(evio_uring_probe_injection.setup_fail_count, 0);
+    assert_int_equal(evio_uring_probe_injection.main_setup_calls, 2);
+    assert_int_equal(evio_uring_probe_injection.main_setup_flags, IORING_SETUP_CLAMP);
+    evio_uring_test_probe_reset();
+
+    assert_pipe_read(loop);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_loop_uring_setup_eperm)
+{
+    // GCOVR_EXCL_START
+    if (!evio_test_uring_supported()) {
+        TEST_SKIPF("io_uring unavailable");
+    }
+    // GCOVR_EXCL_STOP
+
+    evio_uring_test_probe_reset();
+    evio_uring_test_probe_fail_setup_once(EPERM);
+    evio_uring_probe_injection.setup_fail_entries = EVIO_URING_EVENTS;
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    assert_non_null(loop);
+    assert_null(loop->iou);
+    assert_int_equal(evio_uring_probe_injection.setup_fail_count, 0);
+    assert_int_equal(evio_uring_probe_injection.main_setup_calls, 1);
+    evio_uring_test_probe_reset();
+
+    assert_pipe_read(loop);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_loop_uring_setup_retry_fail)
+{
+    // GCOVR_EXCL_START
+    if (!evio_test_uring_supported()) {
+        TEST_SKIPF("io_uring unavailable");
+    }
+    // GCOVR_EXCL_STOP
+
+    evio_uring_test_probe_reset();
+    evio_uring_test_probe_fail_setup_once(EINVAL);
+    evio_uring_probe_injection.setup_fail_entries = EVIO_URING_EVENTS;
+    evio_uring_probe_injection.setup_fail_count = 2;
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    assert_non_null(loop);
+    assert_null(loop->iou);
+    assert_int_equal(evio_uring_probe_injection.setup_fail_count, 0);
+    assert_int_equal(evio_uring_probe_injection.main_setup_calls, 2);
+    assert_int_equal(evio_uring_probe_injection.main_setup_flags, IORING_SETUP_CLAMP);
+    evio_uring_test_probe_reset();
+
+    assert_pipe_read(loop);
+    evio_loop_free(loop);
+}
+
 TEST(test_evio_loop_uring_fallback_enter_eperm)
 {
     // GCOVR_EXCL_START
@@ -1227,26 +1312,7 @@ TEST(test_evio_loop_uring_fallback_enter_eperm)
     assert_non_null(loop);
     assert_null(loop->iou);
 
-    int fds[2] = { -1, -1 };
-    assert_int_equal(pipe(fds), 0);
-    generic_cb_data data = { 0 };
-    evio_poll io;
-    evio_poll_init(&io, generic_cb, fds[0], EVIO_READ);
-    io.data = &data;
-    evio_poll_start(loop, &io);
-
-    assert_int_equal(write(fds[1], "x", 1), 1);
-    evio_run(loop, EVIO_RUN_NOWAIT);
-    assert_int_equal(data.called, 1);
-    assert_int_equal(data.emask, EVIO_POLL | EVIO_READ);
-    assert_true(io.active);
-    char buf[1];
-    assert_int_equal(read(fds[0], buf, sizeof(buf)), 1);
-    assert_memory_equal(buf, "x", 1);
-
-    evio_poll_stop(loop, &io);
-    close(fds[0]);
-    close(fds[1]);
+    assert_pipe_read(loop);
     evio_loop_free(loop);
 }
 
