@@ -1260,6 +1260,31 @@ TEST(test_evio_loop_uring_without_rsrc_tags)
 }
 #endif
 
+#ifdef IORING_FEAT_SUBMIT_STABLE
+TEST(test_evio_loop_uring_without_submit_stable)
+{
+    // GCOVR_EXCL_START
+    if (!evio_test_uring_supported()) {
+        TEST_SKIPF("io_uring unavailable");
+    }
+    // GCOVR_EXCL_STOP
+
+    evio_uring_test_probe_reset();
+    evio_uring_probe_injection.main_setup_disabled_features = IORING_FEAT_SUBMIT_STABLE;
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_URING);
+    assert_non_null(loop);
+    uint32_t features = evio_uring_probe_injection.main_setup_features;
+    bool has_uring = loop->iou != NULL;
+    evio_uring_test_probe_reset();
+
+    assert_pipe_read(loop);
+    evio_loop_free(loop);
+    assert_true(features & IORING_FEAT_SINGLE_MMAP);
+    assert_false(features & IORING_FEAT_SUBMIT_STABLE);
+    assert_true(has_uring);
+}
+#endif
+
 TEST(test_evio_loop_uring_setup_einval_retry)
 {
     // GCOVR_EXCL_START

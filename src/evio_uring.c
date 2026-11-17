@@ -434,8 +434,7 @@ evio_uring *evio_uring_new(void)
     // GCOVR_EXCL_STOP
 
     const uint32_t features = IORING_FEAT_SINGLE_MMAP |
-                              IORING_FEAT_NODROP |
-                              IORING_FEAT_SUBMIT_STABLE;
+                              IORING_FEAT_NODROP;
     // GCOVR_EXCL_START
     if (__evio_unlikely((~params.features) & features)) {
         close(fd);
