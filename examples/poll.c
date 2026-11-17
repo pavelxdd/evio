@@ -33,6 +33,7 @@ int main(void)
     int fds[2] = { -1, -1 };
     if (pipe(fds) != 0) {
         perror("pipe");
+        evio_loop_free(loop);
         return EXIT_FAILURE;
     }
     int read_fd = fds[0];

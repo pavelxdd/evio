@@ -29,6 +29,7 @@ int main(void)
     int fds1[2] = { -1, -1 };
     if (pipe(fds1) != 0) {
         perror("pipe");
+        evio_loop_free(loop);
         return EXIT_FAILURE;
     }
 
@@ -53,6 +54,7 @@ int main(void)
     int fds2[2] = { -1, -1 };
     if (pipe(fds2) != 0) {
         perror("pipe");
+        evio_loop_free(loop);
         return EXIT_FAILURE;
     }
 
