@@ -68,10 +68,25 @@ typedef struct {
     size_t called;
 } async_wait;
 
+static void async_wait_init(async_wait *w)
+{
+    pthread_condattr_t attr;
+    assert_int_equal(pthread_condattr_init(&attr), 0);
+    int rc = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    if (!rc) {
+        rc = pthread_cond_init(&w->cv, &attr);
+    }
+    pthread_condattr_destroy(&attr);
+    assert_int_equal(rc, 0);
+
+    pthread_mutex_init(&w->mu, NULL);
+    w->called = 0;
+}
+
 static bool async_wait_for(async_wait *w, size_t want, int timeout_ms)
 {
     struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
+    clock_gettime(CLOCK_MONOTONIC, &ts);
 
     ts.tv_nsec += (long)timeout_ms * 1000000l;
     ts.tv_sec += ts.tv_nsec / 1000000000l;
@@ -92,9 +107,8 @@ static bool async_wait_for(async_wait *w, size_t want, int timeout_ms)
 
 TEST(test_async_wait_for_timeout)
 {
-    async_wait w = { 0 };
-    pthread_mutex_init(&w.mu, NULL);
-    pthread_cond_init(&w.cv, NULL);
+    async_wait w;
+    async_wait_init(&w);
 
     assert_false(async_wait_for(&w, 1, 0));
 
@@ -140,9 +154,8 @@ static void *run_loop_thread(void *ptr)
 
 TEST(test_evio_async_double_send_wakes_loop_twice)
 {
-    async_wait w = { 0 };
-    pthread_mutex_init(&w.mu, NULL);
-    pthread_cond_init(&w.cv, NULL);
+    async_wait w;
+    async_wait_init(&w);
 
     evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
     assert_non_null(loop);
