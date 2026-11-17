@@ -18,6 +18,7 @@ typedef struct {
     size_t captures;
     size_t burst;
     int prepare_error;
+    evio_rx_subscription *cancel_on_prepare;
     bool timer;
     bool after_next;
 } producer_log;
@@ -95,6 +96,9 @@ static int producer_prepare(void *ctx, evio_loop *loop, evio_rx_emitter *emitter
     log->emitters[index] = emitter;
     log->states[index] = producer;
     *state = producer;
+    if (log->cancel_on_prepare) {
+        evio_rx_subscription_cancel(log->cancel_on_prepare);
+    }
     return 0;
 }
 
@@ -273,6 +277,35 @@ TEST(test_evio_rx_user_source_restart_prepares_new_state)
     assert_int_equal(producer.stopped, 2);
     assert_int_equal(producer.destroyed, 2);
     assert_int_equal(producer.captures, 1);
+    evio_loop_free(loop);
+}
+
+TEST(test_evio_rx_user_source_cancel_during_restart_prepare)
+{
+    evio_loop *loop = evio_loop_new(EVIO_FLAG_NONE);
+    producer_log producer = { .timer = true };
+    user_log log = {0};
+    evio_rx_observable *source = evio_rx_observable_new(&int_type, producer_source,
+                                                        (evio_rx_capture) { .data = &producer });
+    log.subscription = evio_rx_subscription_new(loop, source, user_observer(&log), 1);
+    assert_non_null(log.subscription);
+    evio_rx_subscription_start(log.subscription);
+    assert_int_equal(producer.started, 1);
+    assert_int_equal(producer.stopped, 0);
+    assert_int_equal(producer.destroyed, 0);
+
+    producer.cancel_on_prepare = log.subscription;
+    evio_rx_subscription_restart(log.subscription);
+    assert_true(evio_rx_subscription_is_closed(log.subscription));
+    assert_int_equal(producer.prepared, 2);
+    assert_int_equal(producer.started, 1);
+    assert_int_equal(producer.stopped, 1);
+    assert_int_equal(producer.destroyed, 2);
+    assert_int_equal(evio_refcount(loop), 0);
+    assert_int_equal(log.completed, 0);
+    assert_int_equal(log.error, 0);
+    evio_rx_subscription_free(log.subscription);
+    evio_rx_observable_free(source);
     evio_loop_free(loop);
 }
 

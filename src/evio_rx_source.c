@@ -30,6 +30,9 @@ static void user_start(evio_rx_node *base)
             evio_rx_fail(base->root, error);
             return;
         }
+        if (base->closed) {
+            return;
+        }
     }
     source->source.start(emitter, emitter->state);
 }
